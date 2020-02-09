@@ -1,0 +1,45 @@
+name:                bebb
+version:             0.1.0
+github:              dsprenkels/bebb
+license:             MIT
+author:              Daan Sprenkels
+maintainer:          daan@dsprenkels.com
+copyright:           2020 Daan Sprenkels
+
+# extra-source-files:
+# - README.md
+
+description:         Please see the README on Github at <https://github.com/dsprenkels/bebb#readme>
+
+dependencies:
+- base >= 4.11 && < 10
+- rio
+- megaparsec >= 8.0.0
+
+ghc-options:
+- -Wall
+- -Wcompat
+- -Widentities
+- -Wincomplete-record-updates
+- -Wincomplete-uni-patterns
+- -Wpartial-fields
+- -Wredundant-constraints
+
+library:
+  source-dirs: ["src"]
+
+executables:
+  bebb-exe:
+    main:                Main.hs
+    source-dirs:         app
+    dependencies:
+    - bebb
+
+tests:
+  bebb-test:
+    main:                Spec.hs
+    source-dirs:         test
+    dependencies:
+    - bebb
+    - hspec
+    - hspec-megaparsec >= 2.0.0
