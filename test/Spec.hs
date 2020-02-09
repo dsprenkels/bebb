@@ -4,13 +4,11 @@ module Main (main) where
 
 import           Asm
 import           Test.Hspec
-import           Test.Hspec.QuickCheck
 import           Test.Hspec.Megaparsec
 import           Text.Megaparsec hiding (parse)
 
-
 parse :: Parsec e s a -> s -> Either (ParseErrorBundle s e) a
-parse p = runParser p "<test input>" 
+parse p = runParser p "<test input>"
 
 main :: IO ()
 main = hspec spec
@@ -55,12 +53,9 @@ spInstruction = describe "pInstruction"
       $ parse pInstruction "sub 0x2A" `shouldParse` SUB (LitShortAddr 0x2A)
     it "subi" $ parse pInstruction "subi 0x2A" `shouldParse` SUBI (Imm 0x2A)
     it "subc"
-      $ parse pInstruction "subc 0x2A"
-      `shouldParse` SUBC (LitShortAddr 0x2A)
-    it "subci"
-      $ parse pInstruction "subci 0x2A" `shouldParse` SUBCI (Imm 0x2A)
-    it "or"
-      $ parse pInstruction "or 0x2A" `shouldParse` OR (LitShortAddr 0x2A)
+      $ parse pInstruction "subc 0x2A" `shouldParse` SUBC (LitShortAddr 0x2A)
+    it "subci" $ parse pInstruction "subci 0x2A" `shouldParse` SUBCI (Imm 0x2A)
+    it "or" $ parse pInstruction "or 0x2A" `shouldParse` OR (LitShortAddr 0x2A)
     it "ori" $ parse pInstruction "ori 0x2A" `shouldParse` ORI (Imm 0x2A)
     it "and"
       $ parse pInstruction "and 0x2A" `shouldParse` AND (LitShortAddr 0x2A)
@@ -72,8 +67,11 @@ spInstruction = describe "pInstruction"
 spDecl :: Spec
 spDecl = describe "pDecl"
   $ do
-    it "global label" $ parse pDecl "_start:\n" `shouldParse` LblDecl (Lbl "_start")
-    it "local label" $ parse pDecl ".loop1:\n" `shouldParse` LblDecl (Lbl ".loop1")
-    it "literal address label" $ parse pDecl "0x2A2A:\n" `shouldParse` LblDecl (LitAddr 0x2A2A)
+    it "global label"
+      $ parse pDecl "_start:\n" `shouldParse` LblDecl (Lbl "_start")
+    it "local label"
+      $ parse pDecl ".loop1:\n" `shouldParse` LblDecl (Lbl ".loop1")
+    it "literal address label"
+      $ parse pDecl "0x2A2A:\n" `shouldParse` LblDecl (LitAddr 0x2A2A)
     it "space before global label" $ parse pDecl `shouldFailOn` " _start:\n"
     it "space before local label" $ parse pDecl `shouldFailOn` " .loop1:\n"
