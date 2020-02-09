@@ -6,6 +6,7 @@ module Asm where
 import           RIO hiding (try, many, some)
 import           RIO.Char (isAsciiLower, isAsciiUpper, isDigit)
 import           RIO.Text (singleton, append, pack)
+import           Text.Printf (printf)
 import           Text.Megaparsec
 import qualified Text.Megaparsec.Char.Lexer as L
 import           Text.Megaparsec.Char
@@ -31,7 +32,10 @@ type Label = Text
 
 data Instruction =
     LDA Address
+  | LDAB ShortAddress
+  | LDAI Immediate
   | STA Address
+  | STAB ShortAddress
   | ADD ShortAddress
   | ADDI Immediate
   | ADC ShortAddress
@@ -46,6 +50,9 @@ data Instruction =
   | ANDI Immediate
   | XOR ShortAddress
   | XORI Immediate
+  | JMP Address
+  | JZ Address
+  | RET
   deriving (Show, Eq)
 
 data Decl = InstrDecl Instruction
@@ -74,65 +81,93 @@ sc = L.space (void $ some (char ' ' <|> char '\t')) lineComment empty
 
 -- | Lex a lexeme with spaces
 lexeme :: Parser a -> Parser a
-lexeme = L.lexeme scn
+lexeme = L.lexeme sc
+
+-- | Custom version of Text.Megaparsec.Char.Lexer.symbol
+symbol :: Text -> Parser Text
+symbol = L.symbol sc
+
+-- | Custom version of Text.Megaparsec.Char.Lexer.symbol'
+symbol' :: Text -> Parser Text
+symbol' = L.symbol' sc
 
 -- | Parse a DM assmebly source file
 pASM :: Parser AST
-pASM = error "unimplemented"
+pASM = concat <$> many pLine <* eof
+
+-- | Parse a line
+pLine :: Parser [Decl]
+pLine = (maybeToList <$> optional pDecl) <* sc <* char '\n'
 
 -- | Parse a general declaration
 pDecl :: Parser Decl
-pDecl = pLabelDecl <|> pInstructionDecl
+pDecl = try pLabelDecl <|> try pInstructionDecl
 
 -- | Parse a label declaration
 pLabelDecl :: Parser Decl
-pLabelDecl = (LblDecl <$> pAddressExpr) <* L.symbol sc ":" <* char '\n'
+pLabelDecl = (LblDecl <$> pAddressExpr) <* symbol ":"
 
 -- | Parse an instruction declaration (i.e. a line containing an instruction)
 pInstructionDecl :: Parser Decl
 pInstructionDecl = do
   _ <- some (char ' ' <|> char '\t') -- Require indentation
-  (InstrDecl <$> pInstruction) <* char '\n'
+  InstrDecl <$> pInstruction
 
 -- | Parse an instruction
 pInstruction :: Parser Instruction
 pInstruction = choice
-  [ pOpAddr "LDA" LDA
-  , pOpAddr "STA" STA
-  , pOpSAddr "ADD" ADD
-  , pOpImm "ADDI" ADDI
-  , pOpSAddr "ADC" ADC
-  , pOpImm "ADCI" ADCI
-  , pOpSAddr "SUB" SUB
-  , pOpImm "SUBI" SUBI
-  , pOpSAddr "SUBC" SUBC
-  , pOpImm "SUBCI" SUBCI
-  , pOpSAddr "OR" OR
-  , pOpImm "ORI" ORI
-  , pOpSAddr "AND" AND
-  , pOpImm "ANDI" ANDI
-  , pOpSAddr "XOR" XOR
-  , pOpImm "XORI" XORI]
+  [ try
+      $ do
+        _ <- try $ symbol' "LDA"
+        (LDAB <$> try pShortAddress)
+          <|> (LDA <$> try pAddressExpr)
+          <|> (LDAI <$> try pImmediate)
+  , try
+      $ do
+        _ <- try $ symbol' "STA"
+        (STAB <$> try pShortAddress) <|> (STA <$> try pAddressExpr)
+  , try $ pOpSAddrImm "ADD" ADD ADDI
+  , try $ pOpSAddrImm "ADC" ADC ADCI
+  , try $ pOpSAddrImm "SUB" SUB SUBI
+  , try $ pOpSAddrImm "SUBC" SUBC SUBCI
+  , try $ pOpSAddrImm "OR" OR ORI
+  , try $ pOpSAddrImm "AND" AND ANDI
+  , try $ pOpSAddrImm "XOR" XOR XORI
+  , try $ pOpAddr "JMP" JMP
+  , try $ pOpAddr "JZ" JZ
+  , try $ symbol' "RET" >> return RET]
   <?> "instruction"
   where
-    pOpAddr :: Text -> (Address -> Instruction) -> Parser Instruction
-    pOpAddr opcode ctr = try $ ctr <$> (L.symbol' sc opcode *> pAddressExpr)
+    pOpAddr opcode ctr = do
+      -- Parse an instruction that has a short address or an immediate operand.
+      _ <- try $ symbol' opcode
+      ctr <$> try pAddressExpr
 
-    pOpSAddr :: Text -> (ShortAddress -> Instruction) -> Parser Instruction
-    pOpSAddr opcode ctr = try $ ctr <$> (L.symbol' sc opcode *> pShortAddress)
+    pOpSAddrImm opcode saCTR immCTR = do
+      -- Parse an instruction that has a short address or an immediate operand.
+      _ <- try $ symbol' opcode
+      (saCTR <$> try pShortAddress) <|> (immCTR <$> try pImmediate)
 
-    pOpImm :: Text -> (Immediate -> Instruction) -> Parser Instruction
-    pOpImm opcode ctr = try $ ctr <$> (L.symbol' sc opcode *> pImmediate)
+brackets :: Parser a -> Parser a
+brackets = symbol "[" `between` symbol "]"
 
 -- | Parse an address operand ("0x2A2A")
 pAddressExpr :: Parser Address
-pAddressExpr = (Lbl <$> pLabelIdent <|> LitAddr . fromIntegral <$> pHexadecimal)
-  <?> "address"
+pAddressExpr = (Lbl <$> pLabelIdent <|> LitAddr <$> pLitAddr) <?> "address"
+  where
+    pLitAddr = do
+      addr <- brackets pHexadecimal
+      if addr <= 0xFFFF
+        then return $ fromIntegral addr
+        else fail $ printf "address can be at most 0xFFFF (not 0x%02X)" addr
 
 -- | Parse an address in shortened form ("0x2A")
 pShortAddress :: Parser ShortAddress
-pShortAddress =
-  LitShortAddr . fromIntegral <$> pHexadecimal <?> "short address"
+pShortAddress = do
+  addr <- brackets pHexadecimal <?> "short address"
+  if addr < 0xFF
+    then return $ LitShortAddr $ fromIntegral addr
+    else fail $ printf "short address can be at most 0xFF (not 0x%02X)" addr
 
 -- | Parse an immediate byte value
 pImmediate :: Parser Immediate
@@ -144,15 +179,15 @@ pNumber = pHexadecimal <|> pBinary <|> pDecimal
 
 -- | Parse a decimal value ("42")
 pDecimal :: Parser Int
-pDecimal = L.lexeme sc (L.signed sc L.decimal) <?> "decimal value"
+pDecimal = lexeme (L.signed sc L.decimal) <?> "decimal value"
 
 -- | Parse a hexadecimal value ("0x2A")
 pHexadecimal :: Parser Int
-pHexadecimal = L.lexeme sc (string' "0x" *> L.hexadecimal) <?> "hex value"
+pHexadecimal = lexeme (string' "0x" *> L.hexadecimal) <?> "hex value"
 
 -- | Parse a binary value ("0b101010")
 pBinary :: Parser Int
-pBinary = L.lexeme sc (string' "0b" *> L.binary) <?> "binary value"
+pBinary = lexeme (string' "0b" *> L.binary) <?> "binary value"
 
 -- | Parse a label identifier ("_start", ".loop1", etc.)
 pLabelIdent :: Parser Text
@@ -167,4 +202,3 @@ pLabelIdent = lexeme
     fstLetter = satisfy isAsciiLower <|> satisfy isAsciiUpper <|> char '_'
 
     otherLetter = fstLetter <|> satisfy isDigit
-
