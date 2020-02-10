@@ -1,37 +1,55 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+-- TODO(dsprenkels): Add a custom error reporting function, that not only
+-- supports parse errors, but also type errors etc.
+--
+-- TODO(dsprenkels): Do not "parse" instructions and opcodes immediately, but
+-- parse instructions as-is, and later check if they are correct.
+--
+-- TODO(dsprenkels): Declare some kind of ASTNode a = Span a
+--
+-- TODO(dsprenkels): Put AST definition in AST.hs
+--
 module Asm where
 
-import           RIO hiding (try, many, some)
-import           RIO.Char (isAsciiLower, isAsciiUpper, isDigit)
-import           RIO.Text (singleton, append, pack)
-import           Text.Printf (printf)
-import           Text.Megaparsec
+import RIO hiding (many, some, try)
+import RIO.Char (isAsciiLower, isAsciiUpper, isDigit)
+import RIO.Text (append, pack, singleton)
+import Text.Megaparsec
+import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
-import           Text.Megaparsec.Char
+import Text.Printf (printf)
 
-data Register = PC
-              | SP
+data Register
+  = PC
+  | SP
   deriving (Show, Eq)
 
-data Span = Span { lo :: SourcePos, hi :: SourcePos }
+data Span =
+  Span
+    { lo :: SourcePos
+    , hi :: SourcePos
+    }
   deriving (Show, Eq)
 
-data Address = Lbl Label
-             | LitAddr Word16
+data Address
+  = Lbl Label
+  | LitAddr Word16
   deriving (Show, Eq)
 
-newtype ShortAddress = LitShortAddr Word8
+newtype ShortAddress =
+  LitShortAddr Word8
   deriving (Show, Eq)
 
-newtype Immediate = Imm Word8
+newtype Immediate =
+  Imm Word8
   deriving (Show, Eq)
 
 type Label = Text
 
-data Instruction =
-    LDA Address
+data Instruction
+  = LDA Address
   | LDAB ShortAddress
   | LDAI Immediate
   | STA Address
@@ -55,8 +73,9 @@ data Instruction =
   | RET
   deriving (Show, Eq)
 
-data Decl = InstrDecl Instruction
-          | LblDecl Address
+data Decl
+  = InstrDecl Instruction
+  | LblDecl Address
   deriving (Show, Eq)
 
 type AST = [Decl]
@@ -115,36 +134,36 @@ pInstructionDecl = do
 
 -- | Parse an instruction
 pInstruction :: Parser Instruction
-pInstruction = choice
-  [ try
-      $ do
+pInstruction =
+  choice
+    [ try $ do
         _ <- try $ symbol' "LDA"
-        (LDAB <$> try pShortAddress)
-          <|> (LDA <$> try pAddressExpr)
-          <|> (LDAI <$> try pImmediate)
-  , try
-      $ do
+        (LDAB <$> try pShortAddress) <|> (LDA <$> try pAddressExpr) <|>
+          (LDAI <$> try pImmediate)
+    , try $ do
         _ <- try $ symbol' "STA"
         (STAB <$> try pShortAddress) <|> (STA <$> try pAddressExpr)
-  , try $ pOpSAddrImm "ADD" ADD ADDI
-  , try $ pOpSAddrImm "ADC" ADC ADCI
-  , try $ pOpSAddrImm "SUB" SUB SUBI
-  , try $ pOpSAddrImm "SUBC" SUBC SUBCI
-  , try $ pOpSAddrImm "OR" OR ORI
-  , try $ pOpSAddrImm "AND" AND ANDI
-  , try $ pOpSAddrImm "XOR" XOR XORI
-  , try $ pOpAddr "JMP" JMP
-  , try $ pOpAddr "JZ" JZ
-  , try $ symbol' "RET" >> return RET]
-  <?> "instruction"
+    , try $ pOpSAddrImm "ADD" ADD ADDI
+    , try $ pOpSAddrImm "ADC" ADC ADCI
+    , try $ pOpSAddrImm "SUB" SUB SUBI
+    , try $ pOpSAddrImm "SUBC" SUBC SUBCI
+    , try $ pOpSAddrImm "OR" OR ORI
+    , try $ pOpSAddrImm "AND" AND ANDI
+    , try $ pOpSAddrImm "XOR" XOR XORI
+    , try $ pOpAddr "JMP" JMP
+    , try $ pOpAddr "JZ" JZ
+    , try $ symbol' "RET" >> return RET
+    ] <?>
+  "instruction"
   where
-    pOpAddr opcode ctr = do
+    pOpAddr opcode ctr
       -- Parse an instruction that has a short address or an immediate operand.
+     = do
       _ <- try $ symbol' opcode
       ctr <$> try pAddressExpr
-
-    pOpSAddrImm opcode saCTR immCTR = do
+    pOpSAddrImm opcode saCTR immCTR
       -- Parse an instruction that has a short address or an immediate operand.
+     = do
       _ <- try $ symbol' opcode
       (saCTR <$> try pShortAddress) <|> (immCTR <$> try pImmediate)
 
@@ -191,14 +210,12 @@ pBinary = lexeme (string' "0b" *> L.binary) <?> "binary value"
 
 -- | Parse a label identifier ("_start", ".loop1", etc.)
 pLabelIdent :: Parser Text
-pLabelIdent = lexeme
-  $ do
+pLabelIdent =
+  lexeme $ do
     p <- fromMaybe "" <$> maybeDot
     p' <- append p <$> (singleton <$> fstLetter)
     append p' . pack <$> many otherLetter <?> "label"
   where
     maybeDot = (try . optional) (singleton <$> char '.')
-
     fstLetter = satisfy isAsciiLower <|> satisfy isAsciiUpper <|> char '_'
-
     otherLetter = fstLetter <|> satisfy isDigit
