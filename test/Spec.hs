@@ -1,13 +1,35 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Main
   ( main
   ) where
 
-import Asm
-import Test.Hspec
-import Test.Hspec.Megaparsec
-import Text.Megaparsec hiding (parse)
+import           Asm
+import           RIO
+import           Test.Hspec
+import           Test.Hspec.Megaparsec
+import           Text.Megaparsec       hiding (parse)
+
+newtype NoPos a =
+  NP a
+  deriving (Show, Eq)
+
+instance Node NoPos where
+  newNode parser = NP <$> parser
+  unpackNode (NP a) = a
+
+deriving instance Show (Decl NoPos)
+
+deriving instance Eq (Decl NoPos)
+
+deriving instance Show (Instruction NoPos)
+
+deriving instance Eq (Instruction NoPos)
+
+deriving instance Show (Argument NoPos)
+
+deriving instance Eq (Argument NoPos)
 
 parse :: Parsec e s a -> s -> Either (ParseErrorBundle s e) a
 parse p = runParser p "<test input>"
@@ -19,9 +41,8 @@ spec :: Spec
 spec = do
   spNumber
   spAddressExpr
-  spInstruction
   spDecl
-  spExampleAssembly
+  spExample
 
 spNumber :: Spec
 spNumber =
@@ -33,71 +54,32 @@ spNumber =
 
 spAddressExpr :: Spec
 spAddressExpr =
-  describe "pAddressExpr" $ do
-    it "literal" $ parse pAddressExpr "[0x1337]" `shouldParse` LitAddr 0x1337
-    it "globalLabelIdent" $
-      parse pAddressExpr "_start" `shouldParse` Lbl "_start"
-    it "localLabelIdent" $ parse pAddressExpr ".L1" `shouldParse` Lbl ".L1"
-
-spInstruction :: Spec
-spInstruction =
-  describe "pInstruction" $ do
-    it "lda" $
-      parse pInstruction "lda [0x2A2A]" `shouldParse` LDA (LitAddr 0x2A2A)
-    it "lda w/ short address" $
-      parse pInstruction "lda [0x2A]" `shouldParse` LDAB (LitShortAddr 0x2A)
-    it "lda" $
-      parse pInstruction "lda [0x2A2A]" `shouldParse` LDA (LitAddr 0x2A2A)
-    it "sta" $
-      parse pInstruction "sta [0x2A2A]" `shouldParse` STA (LitAddr 0x2A2A)
-    it "add w/ short address" $
-      parse pInstruction "add [0x2A]" `shouldParse` ADD (LitShortAddr 0x2A)
-    it "add w/ immediate" $
-      parse pInstruction "add 0x2A" `shouldParse` ADDI (Imm 0x2A)
-    it "adc w/ short address" $
-      parse pInstruction "adc [0x2A]" `shouldParse` ADC (LitShortAddr 0x2A)
-    it "adc w/ immediate" $
-      parse pInstruction "adc 0x2A" `shouldParse` ADCI (Imm 0x2A)
-    it "sub w/ short address" $
-      parse pInstruction "sub [0x2A]" `shouldParse` SUB (LitShortAddr 0x2A)
-    it "sub w/ immediate" $
-      parse pInstruction "sub 0x2A" `shouldParse` SUBI (Imm 0x2A)
-    it "subc w/ short address" $
-      parse pInstruction "subc [0x2A]" `shouldParse` SUBC (LitShortAddr 0x2A)
-    it "subc w/ immediate" $
-      parse pInstruction "subc 0x2A" `shouldParse` SUBCI (Imm 0x2A)
-    it "or w/ short address" $
-      parse pInstruction "or [0x2A]" `shouldParse` OR (LitShortAddr 0x2A)
-    it "or w/ immediate" $
-      parse pInstruction "or 0x2A" `shouldParse` ORI (Imm 0x2A)
-    it "and w/ short address" $
-      parse pInstruction "and [0x2A]" `shouldParse` AND (LitShortAddr 0x2A)
-    it "and w/ immediate" $
-      parse pInstruction "and 0x2A" `shouldParse` ANDI (Imm 0x2A)
-    it "xor w/ short address" $
-      parse pInstruction "xor [0x2A]" `shouldParse` XOR (LitShortAddr 0x2A)
-    it "xor w/ immediate" $
-      parse pInstruction "xor 0x2A" `shouldParse` XORI (Imm 0x2A)
+  describe "pAddressExpr" $
+  it "literal" $ parse pAddressExpr "[0x2A2A]" `shouldParse` LitAddr 0x2A2A
 
 spDecl :: Spec
 spDecl =
   describe "pDecl" $ do
     it "global label" $
-      parse pDecl "_start:\n" `shouldParse` LblDecl (Lbl "_start")
+      parse pDecl "_start:\n" `shouldParse` LblDecl (NP $ Lbl "_start")
     it "local label" $
-      parse pDecl ".loop1:\n" `shouldParse` LblDecl (Lbl ".loop1")
+      parse pDecl ".loop1:\n" `shouldParse` LblDecl (NP $ Lbl ".loop1")
     it "literal address label" $
-      parse pDecl "[0x2A2A]:\n" `shouldParse` LblDecl (LitAddr 0x2A2A)
-    it "space before global label" $ parse pDecl `shouldFailOn` " _start:\n"
-    it "space before local label" $ parse pDecl `shouldFailOn` " .loop1:\n"
+      parse pDecl "[0x2A2A]:\n" `shouldParse` LblDecl (NP $ LitAddr 0x2A2A)
     it "add instruction" $
       parse pDecl "  add [0x2A]\n" `shouldParse`
-      InstrDecl (ADD (LitShortAddr 0x2A))
+      InstrDecl
+        (NP $
+         Instr {opcode = NP "add", args = [NP $ ArgSA $ NP $ LitShortAddr 0x2A]})
+    it "globalLabelIdent" $
+      parse pAddressExpr "_start" `shouldParse` Lbl "_start"
+    it "localLabelIdent" $ parse pAddressExpr ".L1" `shouldParse` Lbl ".L1"
 
-spExampleAssembly :: Spec
-spExampleAssembly =
-  describe "example1" $ it "parse" $ parse pASM asm `shouldParse` expected
+spExample :: Spec
+spExample = describe "example" $ it "fibonacci" $ parse p `shouldSucceedOn` asm
   where
+    p :: Parser (AST NoPos)
+    p = pASM
     asm =
       "\
       \fibonacci:\n\
@@ -128,26 +110,3 @@ spExampleAssembly =
       \.loop1_break:\n\
       \  ret\n\
       \\n"
-    expected =
-      [ LblDecl (Lbl "fibonacci")
-      , InstrDecl (LDAI (Imm 0))
-      , InstrDecl (STAB (LitShortAddr 0))
-      , InstrDecl (LDAI (Imm 1))
-      , InstrDecl (STAB (LitShortAddr 1))
-      , InstrDecl (LDAI (Imm 10))
-      , LblDecl (Lbl ".loop1")
-      , InstrDecl (STAB (LitShortAddr 3))
-      , InstrDecl (LDAB (LitShortAddr 1))
-      , InstrDecl (ADD (LitShortAddr 0))
-      , InstrDecl (STAB (LitShortAddr 2))
-      , InstrDecl (LDAB (LitShortAddr 1))
-      , InstrDecl (STAB (LitShortAddr 0))
-      , InstrDecl (LDAB (LitShortAddr 2))
-      , InstrDecl (STAB (LitShortAddr 1))
-      , InstrDecl (LDAB (LitShortAddr 3))
-      , InstrDecl (SUBI (Imm 1))
-      , InstrDecl (JZ (Lbl ".loop1_break"))
-      , InstrDecl (JMP (Lbl ".loop1"))
-      , LblDecl (Lbl ".loop1_break")
-      , InstrDecl RET
-      ]

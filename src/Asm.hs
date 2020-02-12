@@ -1,85 +1,99 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
-
+-- !! https://haskell.godbolt.org/z/-5mTew
 -- TODO(dsprenkels): Add a custom error reporting function, that not only
 -- supports parse errors, but also type errors etc.
 --
 -- TODO(dsprenkels): Do not "parse" instructions and opcodes immediately, but
 -- parse instructions as-is, and later check if they are correct.
 --
--- TODO(dsprenkels): Declare some kind of ASTNode a = Span a
---
 -- TODO(dsprenkels): Put AST definition in AST.hs
 --
 module Asm where
 
-import RIO hiding (many, some, try)
-import RIO.Char (isAsciiLower, isAsciiUpper, isDigit)
-import RIO.Text (append, pack, singleton)
-import Text.Megaparsec
-import Text.Megaparsec.Char
+import           RIO                        hiding (many, some, try)
+import           RIO.Char                   (isAlpha, isAlphaNum, isAsciiLower,
+                                             isAsciiUpper, isDigit)
+import           RIO.Text                   (append, pack, singleton)
+import           Text.Megaparsec
+import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
-import Text.Printf (printf)
+import           Text.Printf                (printf)
 
-data Register
-  = PC
-  | SP
-  deriving (Show, Eq)
-
-data Span =
-  Span
+data SourceSpan =
+  SourceSpan
     { lo :: SourcePos
     , hi :: SourcePos
     }
   deriving (Show, Eq)
 
-data Address
-  = Lbl Label
-  | LitAddr Word16
+data WithPos a =
+  WP
+    { a  :: a
+    , ss :: SourceSpan
+    }
+  deriving (Show, Eq)
+
+class Node (n :: * -> *) where
+  newNode :: Parser a -> Parser (n a)
+  unpackNode :: n a -> a
+
+instance Node WithPos where
+  newNode parser = do
+    lo <- getSourcePos
+    a <- parser
+    hi <- getSourcePos
+    return WP {a, ss = SourceSpan {lo, hi}}
+  unpackNode WP {a} = a
+
+-- AST nodes:
+type AST n = [Decl n]
+
+data Decl n
+  = InstrDecl (n (Instruction n))
+  | LblDecl (n Address)
+
+data Instruction n =
+  Instr
+    { opcode :: n Text
+    , args   :: [n (Argument n)]
+    }
+
+data Argument n
+  = ArgImm (n Immediate)
+  | ArgSA (n ShortAddress)
+  | ArgA (n Address)
+
+newtype Immediate =
+  Imm Word8
   deriving (Show, Eq)
 
 newtype ShortAddress =
   LitShortAddr Word8
   deriving (Show, Eq)
 
-newtype Immediate =
-  Imm Word8
+data Address
+  = Lbl Text
+  | LitAddr Word16
   deriving (Show, Eq)
 
-type Label = Text
-
-data Instruction
-  = LDA Address
-  | LDAB ShortAddress
-  | LDAI Immediate
-  | STA Address
-  | STAB ShortAddress
-  | ADD ShortAddress
-  | ADDI Immediate
-  | ADC ShortAddress
-  | ADCI Immediate
-  | SUB ShortAddress
-  | SUBI Immediate
-  | SUBC ShortAddress
-  | SUBCI Immediate
-  | OR ShortAddress
-  | ORI Immediate
-  | AND ShortAddress
-  | ANDI Immediate
-  | XOR ShortAddress
-  | XORI Immediate
-  | JMP Address
-  | JZ Address
-  | RET
+data Register
+  = PC
+  | SP
+  | R Int
   deriving (Show, Eq)
 
-data Decl
-  = InstrDecl Instruction
-  | LblDecl Address
-  deriving (Show, Eq)
+deriving instance Show (Decl WithPos)
 
-type AST = [Decl]
+deriving instance Eq (Decl WithPos)
 
+deriving instance Show (Instruction WithPos)
+
+deriving instance Eq (Instruction WithPos)
+
+deriving instance Show (Argument WithPos)
+
+deriving instance Eq (Argument WithPos)
+
+-- | Our custom Megaparsec parser type
 type Parser = Parsec Void Text
 
 -- | Assembly the contents of an assembly file to binary
@@ -96,7 +110,7 @@ scn = L.space space1 lineComment empty
 
 -- | Consume space characters but not newlines
 sc :: Parser ()
-sc = L.space (void $ some (char ' ' <|> char '\t')) lineComment empty
+sc = L.space (void (char ' ' <|> char '\t')) lineComment empty
 
 -- | Lex a lexeme with spaces
 lexeme :: Parser a -> Parser a
@@ -111,62 +125,45 @@ symbol' :: Text -> Parser Text
 symbol' = L.symbol' sc
 
 -- | Parse a DM assmebly source file
-pASM :: Parser AST
+pASM :: (Node a) => Parser (AST a)
 pASM = concat <$> many pLine <* eof
 
 -- | Parse a line
-pLine :: Parser [Decl]
+pLine :: (Node a) => Parser [Decl a]
 pLine = (maybeToList <$> optional pDecl) <* sc <* char '\n'
 
 -- | Parse a general declaration
-pDecl :: Parser Decl
+pDecl :: (Node a) => Parser (Decl a)
 pDecl = try pLabelDecl <|> try pInstructionDecl
 
 -- | Parse a label declaration
-pLabelDecl :: Parser Decl
-pLabelDecl = (LblDecl <$> pAddressExpr) <* symbol ":"
+pLabelDecl :: (Node a) => Parser (Decl a)
+pLabelDecl = (LblDecl <$> newNode pAddressExpr) <* symbol ":"
 
 -- | Parse an instruction declaration (i.e. a line containing an instruction)
-pInstructionDecl :: Parser Decl
+pInstructionDecl :: (Node a) => Parser (Decl a)
 pInstructionDecl = do
-  _ <- some (char ' ' <|> char '\t') -- Require indentation
-  InstrDecl <$> pInstruction
+  void $ some (char ' ' <|> char '\t') -- Require indentation
+  InstrDecl <$> newNode pInstruction
 
 -- | Parse an instruction
-pInstruction :: Parser Instruction
-pInstruction =
-  choice
-    [ try $ do
-        _ <- try $ symbol' "LDA"
-        (LDAB <$> try pShortAddress) <|> (LDA <$> try pAddressExpr) <|>
-          (LDAI <$> try pImmediate)
-    , try $ do
-        _ <- try $ symbol' "STA"
-        (STAB <$> try pShortAddress) <|> (STA <$> try pAddressExpr)
-    , try $ pOpSAddrImm "ADD" ADD ADDI
-    , try $ pOpSAddrImm "ADC" ADC ADCI
-    , try $ pOpSAddrImm "SUB" SUB SUBI
-    , try $ pOpSAddrImm "SUBC" SUBC SUBCI
-    , try $ pOpSAddrImm "OR" OR ORI
-    , try $ pOpSAddrImm "AND" AND ANDI
-    , try $ pOpSAddrImm "XOR" XOR XORI
-    , try $ pOpAddr "JMP" JMP
-    , try $ pOpAddr "JZ" JZ
-    , try $ symbol' "RET" >> return RET
-    ] <?>
-  "instruction"
+pInstruction :: (Node a) => Parser (Instruction a)
+pInstruction = do
+  opcode <- newNode $ lexeme pOpcode
+  args <- many $ newNode ((pImmArg <|> pSAArg <|> pAArg) <?> "instruction argument")
+  return $ Instr {opcode, args}
   where
-    pOpAddr opcode ctr
-      -- Parse an instruction that has a short address or an immediate operand.
-     = do
-      _ <- try $ symbol' opcode
-      ctr <$> try pAddressExpr
-    pOpSAddrImm opcode saCTR immCTR
-      -- Parse an instruction that has a short address or an immediate operand.
-     = do
-      _ <- try $ symbol' opcode
-      (saCTR <$> try pShortAddress) <|> (immCTR <$> try pImmediate)
+    pImmArg = ArgImm <$> newNode pImmediate
+    pSAArg = ArgSA <$> newNode pShortAddress
+    pAArg = ArgA <$> newNode pAddressExpr
 
+pOpcode :: Parser Text
+pOpcode = do
+  c <- satisfy isAlpha
+  rest <- many $ satisfy isAlphaNum
+  return $ pack $ c : rest
+
+-- | Wrap a parser between brackets ("[ ... ]")
 brackets :: Parser a -> Parser a
 brackets = symbol "[" `between` symbol "]"
 
@@ -190,7 +187,7 @@ pShortAddress = do
 
 -- | Parse an immediate byte value
 pImmediate :: Parser Immediate
-pImmediate = Imm . fromIntegral <$> pNumber <?> "immediate value"
+pImmediate = (Imm . fromIntegral <$> pNumber) <?> "immediate value"
 
 -- | Parse a number
 pNumber :: Parser Int
