@@ -59,26 +59,20 @@ data Instruction n =
 
 data Argument n
   = ArgImm (n Immediate)
-  | ArgSA (n ShortAddress)
+  | ArgR (n Register)
   | ArgA (n Address)
 
 newtype Immediate =
   Imm Word8
   deriving (Show, Eq)
 
-newtype ShortAddress =
-  LitShortAddr Word8
+newtype Register =
+  Reg Text
   deriving (Show, Eq)
 
 data Address
   = Lbl Text
   | LitAddr Word16
-  deriving (Show, Eq)
-
-data Register
-  = PC
-  | SP
-  | R Int
   deriving (Show, Eq)
 
 deriving instance Show (Decl WithPos)
@@ -149,19 +143,16 @@ pInstructionDecl = do
 -- | Parse an instruction
 pInstruction :: (Node a) => Parser (Instruction a)
 pInstruction = do
-  opcode <- newNode $ lexeme pOpcode
+  opcode <- newNode pOpcode
   args <- many $ newNode ((pImmArg <|> pSAArg <|> pAArg) <?> "instruction argument")
   return $ Instr {opcode, args}
   where
     pImmArg = ArgImm <$> newNode pImmediate
-    pSAArg = ArgSA <$> newNode pShortAddress
+    pSAArg = ArgR <$> newNode pRegister
     pAArg = ArgA <$> newNode pAddressExpr
 
 pOpcode :: Parser Text
-pOpcode = do
-  c <- satisfy isAlpha
-  rest <- many $ satisfy isAlphaNum
-  return $ pack $ c : rest
+pOpcode = lexeme pName
 
 -- | Wrap a parser between brackets ("[ ... ]")
 brackets :: Parser a -> Parser a
@@ -178,12 +169,15 @@ pAddressExpr = (Lbl <$> pLabelIdent <|> LitAddr <$> pLitAddr) <?> "address"
         else fail $ printf "address can be at most 0xFFFF (not 0x%02X)" addr
 
 -- | Parse an address in shortened form ("0x2A")
-pShortAddress :: Parser ShortAddress
-pShortAddress = do
-  addr <- brackets pHexadecimal <?> "short address"
-  if addr < 0xFF
-    then return $ LitShortAddr $ fromIntegral addr
-    else fail $ printf "short address can be at most 0xFF (not 0x%02X)" addr
+pRegister :: Parser Register
+pRegister = Reg <$> lexeme pName
+
+pName :: Parser Text
+pName = do
+  c <- satisfy isAlpha
+  rest <- many $ satisfy isAlphaNum
+  return $ pack $ c : rest
+
 
 -- | Parse an immediate byte value
 pImmediate :: Parser Immediate

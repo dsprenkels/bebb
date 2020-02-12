@@ -67,10 +67,10 @@ spDecl =
     it "literal address label" $
       parse pDecl "[0x2A2A]:\n" `shouldParse` LblDecl (NP $ LitAddr 0x2A2A)
     it "add instruction" $
-      parse pDecl "  add [0x2A]\n" `shouldParse`
+      parse pDecl "  add r3\n" `shouldParse`
       InstrDecl
         (NP $
-         Instr {opcode = NP "add", args = [NP $ ArgSA $ NP $ LitShortAddr 0x2A]})
+         Instr {opcode = NP "add", args = [NP $ ArgR $ NP $ Reg "r3"]})
     it "globalLabelIdent" $
       parse pAddressExpr "_start" `shouldParse` Lbl "_start"
     it "localLabelIdent" $ parse pAddressExpr ".L1" `shouldParse` Lbl ".L1"
