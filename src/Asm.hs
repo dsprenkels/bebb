@@ -8,11 +8,6 @@
 -- TODO(dsprenkels): Add a custom error reporting function, that not only
 -- supports parse errors, but also type errors etc.
 --
--- TODO(dsprenkels): Do not "parse" instructions and mnemonics immediately, but
--- parse instructions as-is, and later check if they are correct.
---
--- TODO(dsprenkels): Put AST definition in AST.hs
---
 module Asm where
 
 import           AST
