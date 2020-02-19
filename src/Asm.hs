@@ -152,7 +152,9 @@ pName = do
 
 -- | Parse an immediate byte value
 pImmediate :: Parser Immediate
-pImmediate = (Imm . fromIntegral <$> pNumber) <?> "immediate value"
+pImmediate = do
+  void $ lexeme $ char '#'
+  (Imm . fromIntegral <$> pNumber) <?> "immediate value"
 
 -- | Parse a number
 pNumber :: Parser Int

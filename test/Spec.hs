@@ -85,12 +85,12 @@ spExample = describe "example" $ it "fibonacci" $ parse p `shouldSucceedOn` asm
       \fibonacci:\n\
       \  ; Compute 10 steps of the fibonacci sequence.\n\
       \\n\
-      \  lda 0\n\
+      \  lda #0\n\
       \  sta r0\n\
-      \  lda 1\n\
+      \  lda #1\n\
       \  sta r1\n\
       \\n\
-      \  lda 10\n\
+      \  lda #10\n\
       \.loop1:\n\
       \  sta r3 ; loop counter\n\
       \\n\
@@ -103,7 +103,7 @@ spExample = describe "example" $ it "fibonacci" $ parse p `shouldSucceedOn` asm
       \  sta r1\n\
       \\n\
       \  lda r3\n\
-      \  sub 1\n\
+      \  sub #1\n\
       \  jz .loop1_break\n\
       \  jmp .loop1\n\
       \\n\
