@@ -1,11 +1,12 @@
-{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+
 
 module Run
   ( run
   ) where
 
-import RIO
+import           RIO
 import qualified RIO.ByteString as BS
 
 run :: IO ()

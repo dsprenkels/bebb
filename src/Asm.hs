@@ -1,14 +1,21 @@
--- !! https://haskell.godbolt.org/z/-5mTew
+{-# LANGUAGE FlexibleInstances  #-}
+{-# LANGUAGE KindSignatures     #-}
+{-# LANGUAGE NamedFieldPuns     #-}
+{-# LANGUAGE NoImplicitPrelude  #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE StandaloneDeriving #-}
+
 -- TODO(dsprenkels): Add a custom error reporting function, that not only
 -- supports parse errors, but also type errors etc.
 --
--- TODO(dsprenkels): Do not "parse" instructions and opcodes immediately, but
+-- TODO(dsprenkels): Do not "parse" instructions and mnemonics immediately, but
 -- parse instructions as-is, and later check if they are correct.
 --
 -- TODO(dsprenkels): Put AST definition in AST.hs
 --
 module Asm where
 
+import           AST
 import           RIO                        hiding (many, some, try)
 import           RIO.Char                   (isAlpha, isAlphaNum, isAsciiLower,
                                              isAsciiUpper, isDigit)
@@ -18,62 +25,32 @@ import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
 import           Text.Printf                (printf)
 
-data SourceSpan =
-  SourceSpan
+-- | Our custom Megaparsec parser type
+type Parser = Parsec Void Text
+
+data SourceSpan = SourceSpan
     { lo :: SourcePos
     , hi :: SourcePos
     }
-  deriving (Show, Eq)
-
-data WithPos a =
-  WP
-    { a  :: a
-    , ss :: SourceSpan
-    }
-  deriving (Show, Eq)
+    deriving (Show, Eq)
 
 class Node (n :: * -> *) where
   newNode :: Parser a -> Parser (n a)
   unpackNode :: n a -> a
 
+data WithPos a = WP
+    { node :: a
+    , ss   :: SourceSpan
+    }
+    deriving (Show, Eq)
+
 instance Node WithPos where
   newNode parser = do
     lo <- getSourcePos
-    a <- parser
+    node <- parser
     hi <- getSourcePos
-    return WP {a, ss = SourceSpan {lo, hi}}
-  unpackNode WP {a} = a
-
--- AST nodes:
-type AST n = [Decl n]
-
-data Decl n
-  = InstrDecl (n (Instruction n))
-  | LblDecl (n Address)
-
-data Instruction n =
-  Instr
-    { opcode :: n Text
-    , args   :: [n (Argument n)]
-    }
-
-data Argument n
-  = ArgImm (n Immediate)
-  | ArgR (n Register)
-  | ArgA (n Address)
-
-newtype Immediate =
-  Imm Word8
-  deriving (Show, Eq)
-
-newtype Register =
-  Reg Text
-  deriving (Show, Eq)
-
-data Address
-  = Lbl Text
-  | LitAddr Word16
-  deriving (Show, Eq)
+    return WP {node, ss = SourceSpan {lo, hi}}
+  unpackNode WP {node} = node
 
 deriving instance Show (Decl WithPos)
 
@@ -83,12 +60,9 @@ deriving instance Show (Instruction WithPos)
 
 deriving instance Eq (Instruction WithPos)
 
-deriving instance Show (Argument WithPos)
+deriving instance Show (Operand WithPos)
 
-deriving instance Eq (Argument WithPos)
-
--- | Our custom Megaparsec parser type
-type Parser = Parsec Void Text
+deriving instance Eq (Operand WithPos)
 
 -- | Assembly the contents of an assembly file to binary
 assemble :: Text -> ByteString
@@ -132,7 +106,7 @@ pDecl = try pLabelDecl <|> try pInstructionDecl
 
 -- | Parse a label declaration
 pLabelDecl :: (Node a) => Parser (Decl a)
-pLabelDecl = (LblDecl <$> newNode pAddressExpr) <* symbol ":"
+pLabelDecl = (LblDecl <$> newNode pLabel) <* symbol ":"
 
 -- | Parse an instruction declaration (i.e. a line containing an instruction)
 pInstructionDecl :: (Node a) => Parser (Decl a)
@@ -143,26 +117,29 @@ pInstructionDecl = do
 -- | Parse an instruction
 pInstruction :: (Node a) => Parser (Instruction a)
 pInstruction = do
-  opcode <- newNode pOpcode
-  args <- many $ newNode ((pImmArg <|> pSAArg <|> pAArg) <?> "instruction argument")
-  return $ Instr {opcode, args}
+  mnemonic <- newNode pMnemonic
+  opnds <- newNode pAnyOp `sepBy` comma
+  return $ Instr {mnemonic, opnds}
   where
-    pImmArg = ArgImm <$> newNode pImmediate
-    pSAArg = ArgR <$> newNode pRegister
-    pAArg = ArgA <$> newNode pAddressExpr
+    pAnyOp = (pImmOp <|> pRegOp <|> pLblOp <|> pAOp) <?> "instruction operand"
+    pImmOp = OpI <$> newNode pImmediate
+    pRegOp = OpR <$> newNode pRegister
+    pLblOp = OpL <$> newNode pLabel
+    pAOp = OpA <$> newNode pAddress
+    comma = symbol ","
 
-pOpcode :: Parser Text
-pOpcode = lexeme pName
+pMnemonic :: Parser Text
+pMnemonic = lexeme pName
 
 -- | Wrap a parser between brackets ("[ ... ]")
 brackets :: Parser a -> Parser a
 brackets = symbol "[" `between` symbol "]"
 
 -- | Parse an address operand ("0x2A2A")
-pAddressExpr :: Parser Address
-pAddressExpr = (Lbl <$> pLabelIdent <|> LitAddr <$> pLitAddr) <?> "address"
+pAddress :: Parser Address
+pAddress = (Addr <$> addr') <?> "address"
   where
-    pLitAddr = do
+    addr' = do
       addr <- brackets pHexadecimal
       if addr <= 0xFFFF
         then return $ fromIntegral addr
@@ -177,7 +154,6 @@ pName = do
   c <- satisfy isAlpha
   rest <- many $ satisfy isAlphaNum
   return $ pack $ c : rest
-
 
 -- | Parse an immediate byte value
 pImmediate :: Parser Immediate
@@ -200,12 +176,12 @@ pBinary :: Parser Int
 pBinary = lexeme (string' "0b" *> L.binary) <?> "binary value"
 
 -- | Parse a label identifier ("_start", ".loop1", etc.)
-pLabelIdent :: Parser Text
-pLabelIdent =
+pLabel :: Parser Label
+pLabel =
   lexeme $ do
     p <- fromMaybe "" <$> maybeDot
     p' <- append p <$> (singleton <$> fstLetter)
-    append p' . pack <$> many otherLetter <?> "label"
+    Lbl <$> (append p' . pack <$> many otherLetter <?> "label")
   where
     maybeDot = (try . optional) (singleton <$> char '.')
     fstLetter = satisfy isAsciiLower <|> satisfy isAsciiUpper <|> char '_'
