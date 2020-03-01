@@ -13,26 +13,34 @@ data Decl n = InstrDecl (n (Instruction n))
 
 data Instruction n = Instr
     { mnemonic :: !(n Text)
-    , opnds  :: [n (Operand n)]
+    , opnds    :: [n (Operand n)]
     }
 
-data Operand n = OpI !(n Immediate)
-    | OpR !(n Register)
-    | OpL !(n Label)
-    | OpA !(n Address)
+data Operand n = Imm (Expr n)
+    | Addr (Expr n)
 
-newtype Immediate =
-  Imm Word8
-  deriving (Show, Eq)
+data Expr n = Ident !(n Identifier)
+    | Lit !(n Literal)
+    | Binary !BinOp !(n (Expr n)) !(n (Expr n))
+    | Unary !UnOp !(n (Expr n))
 
-newtype Register =
-  Reg Text
-  deriving (Show, Eq)
+data BinOp = Add
+    | Sub
+    | Mul
+    | Div
+    | Mod
+    | And
+    | Or
+    | Xor
+    deriving (Show, Eq)
 
-newtype Label =
-  Lbl Text
-  deriving (Show, Eq)
+type Identifier = Text
 
-newtype Address =
-  Addr Word16
-  deriving (Show, Eq)
+type Literal = Int
+
+data UnOp = Pos
+    | Neg
+    | Not
+    deriving (Show, Eq)
+
+type Label = Text

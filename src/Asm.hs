@@ -11,14 +11,23 @@
 module Asm where
 
 import           AST
-import           RIO                        hiding (many, some, try)
-import           RIO.Char                   (isAlpha, isAlphaNum, isAsciiLower,
-                                             isAsciiUpper, isDigit)
-import           RIO.Text                   (append, pack, singleton)
+import           RIO                     hiding ( many
+                                                , some
+                                                , try
+                                                )
+import           RIO.Char                       ( isAlpha
+                                                , isAlphaNum
+                                                , isAsciiLower
+                                                , isAsciiUpper
+                                                , isDigit
+                                                )
+import           RIO.Text                       ( append
+                                                , pack
+                                                , singleton
+                                                )
 import           Text.Megaparsec
 import           Text.Megaparsec.Char
-import qualified Text.Megaparsec.Char.Lexer as L
-import           Text.Printf                (printf)
+import qualified Text.Megaparsec.Char.Lexer    as L
 
 -- | Our custom Megaparsec parser type
 type Parser = Parsec Void Text
@@ -30,7 +39,8 @@ data SourceSpan = SourceSpan
     deriving (Show, Eq)
 
 class Node (n :: * -> *) where
-  newNode :: Parser a -> Parser (n a)
+  nodeParser :: Parser a -> Parser (n a)
+  nodeFrom ::  (n b, n c) -> a -> n a
   unpackNode :: n a -> a
 
 data WithPos a = WP
@@ -40,12 +50,16 @@ data WithPos a = WP
     deriving (Show, Eq)
 
 instance Node WithPos where
-  newNode parser = do
-    lo <- getSourcePos
+  nodeParser parser = do
+    lo   <- getSourcePos
     node <- parser
-    hi <- getSourcePos
-    return WP {node, ss = SourceSpan {lo, hi}}
-  unpackNode WP {node} = node
+    hi   <- getSourcePos
+    return WP { node, ss = SourceSpan { lo, hi } }
+  nodeFrom (n1, n2) node = WP { node, ss = SourceSpan { lo, hi } }
+   where
+    WP { ss = SourceSpan { lo } } = n1
+    WP { ss = SourceSpan { hi } } = n2
+  unpackNode WP { node } = node
 
 deriving instance Show (Decl WithPos)
 
@@ -58,6 +72,10 @@ deriving instance Eq (Instruction WithPos)
 deriving instance Show (Operand WithPos)
 
 deriving instance Eq (Operand WithPos)
+
+deriving instance Show (Expr WithPos)
+
+deriving instance Eq (Expr WithPos)
 
 -- | Assembly the contents of an assembly file to binary
 assemble :: Text -> ByteString
@@ -88,73 +106,134 @@ symbol' :: Text -> Parser Text
 symbol' = L.symbol' sc
 
 -- | Parse a DM assmebly source file
-pASM :: (Node a) => Parser (AST a)
-pASM = concat <$> many pLine <* eof
+pASM :: Node a => Parser (AST a)
+pASM = concat <$> many (maybeToList <$> pLine) <* eof
 
 -- | Parse a line
-pLine :: (Node a) => Parser [Decl a]
-pLine = (maybeToList <$> optional pDecl) <* sc <* char '\n'
+pLine :: Node a => Parser (Maybe (Decl a))
+pLine = (pInstructionDeclOrEmptyLine <|> optional pLabelDecl) <* sc <* char
+  '\n'
+ where
+  pInstructionDeclOrEmptyLine = do
+    void $ lexeme (char ' ' <|> char '\t') -- Require indentation
+    optional pInstructionDecl
 
 -- | Parse a general declaration
-pDecl :: (Node a) => Parser (Decl a)
-pDecl = try pLabelDecl <|> try pInstructionDecl
+pDecl :: Node a => Parser (Decl a)
+pDecl = pLabelDecl <|> pInstructionDecl
 
 -- | Parse a label declaration
-pLabelDecl :: (Node a) => Parser (Decl a)
-pLabelDecl = (LblDecl <$> newNode pLabel) <* symbol ":"
+pLabelDecl :: Node a => Parser (Decl a)
+pLabelDecl = (LblDecl <$> nodeParser pLabel) <* symbol ":"
 
 -- | Parse an instruction declaration (i.e. a line containing an instruction)
-pInstructionDecl :: (Node a) => Parser (Decl a)
-pInstructionDecl = do
-  void $ some (char ' ' <|> char '\t') -- Require indentation
-  InstrDecl <$> newNode pInstruction
+pInstructionDecl :: Node a => Parser (Decl a)
+pInstructionDecl = InstrDecl <$> nodeParser pInstruction
 
 -- | Parse an instruction
-pInstruction :: (Node a) => Parser (Instruction a)
+pInstruction :: Node a => Parser (Instruction a)
 pInstruction = do
-  mnemonic <- newNode pMnemonic
-  opnds <- newNode pAnyOp `sepBy` comma
-  return $ Instr {mnemonic, opnds}
-  where
-    pAnyOp = (pImmOp <|> pRegOp <|> pLblOp <|> pAOp) <?> "instruction operand"
-    pImmOp = OpI <$> newNode pImmediate
-    pRegOp = OpR <$> newNode pRegister
-    pLblOp = OpL <$> newNode pLabel
-    pAOp = OpA <$> newNode pAddress
-    comma = symbol ","
+  mnemonic <- nodeParser pMnemonic
+  opnds    <- nodeParser pAnyOp `sepBy` symbol ","
+  return $ Instr { mnemonic, opnds }
+ where
+  pAnyOp  = (pImmOp <|> pAddrOp) <?> "instruction operand"
+  pImmOp  = Imm <$> (symbol "#" *> pExpr)
+  pAddrOp = Addr <$> pExpr
 
+-- | Parse an instruction mnemonic
 pMnemonic :: Parser Text
 pMnemonic = lexeme pName
+
+-- | Wrap a parser between parentheses ("( ... )")
+parens :: Parser a -> Parser a
+parens = symbol "(" `between` symbol ")"
 
 -- | Wrap a parser between brackets ("[ ... ]")
 brackets :: Parser a -> Parser a
 brackets = symbol "[" `between` symbol "]"
 
+-- | Parse an address ("0x2A2A")
+pAddress :: Node a => Parser (Operand a)
+pAddress = (Addr <$> pExpr) <?> "address"
+
+-- | Parse an expression
+pExpr :: Node a => Parser (Expr a)
+pExpr = pBinOpExpr binaryOps
+
+-- | Parse an expression, but restrict to parsing the binary operations in `opsLeft`
+pExpr' :: Node a => [BinaryOps] -> Parser (Expr a)
+pExpr' []      = pTermExpr
+pExpr' opsLeft = pBinOpExpr opsLeft
+
+-- | A list of binary operations seperated by some symbol
+type BinaryOps = [(Text, BinOp)]
+
+-- | Parse a binary expression ('3 + 3')
+pBinOpExpr :: Node a => [BinaryOps] -> Parser (Expr a)
+pBinOpExpr []                   = pTermExpr
+pBinOpExpr (ops : nextLevelOps) = do
+  ret  <- nodeParser $ pExpr' nextLevelOps
+  rest <- many $ do
+    op  <- pOp ops
+    rhs <- nodeParser $ pExpr' nextLevelOps
+    return (op, rhs)
+  return $ unflatten ret rest
+ where
+  -- unflatten is left-associative
+  unflatten root [] = unpackNode root
+  unflatten lhs ((op, rhs) : rest) =
+    unflatten (nodeFrom (lhs, rhs) (Binary op lhs rhs)) rest
+
+-- | Definitions of all binary operations ordered by precedence.
+binaryOps :: [BinaryOps]
+binaryOps =
+  [ [("&", And), ("|", Or), ("^", Xor)]
+  , [("+", Add), ("-", Sub)]
+  , [("*", Mul), ("/", Div), ("%", Mod)]
+  ]
+
+-- | Parse a unary expression ('-3')
+pUnOpExpr :: Node a => Parser (Expr a)
+pUnOpExpr = do
+  op   <- pOp unaryOps
+  opnd <- nodeParser pExpr
+  return $ Unary op opnd
+
+-- | A list of unary operations prefixed by some symbol
+type UnaryOps = [(Text, UnOp)]
+
+-- | Definitions of all unary operations.
+unaryOps :: UnaryOps
+unaryOps = [("+", Pos), ("-", Neg), ("~", Not)]
+
+-- | Parse an operator chosen from a list of operators
+pOp :: [(Text, a)] -> Parser a
+pOp []                 = empty
+pOp ((sym, op) : next) = (symbol sym >> return op) <|> pOp next
+
+-- | Parse an expression
+pTermExpr :: Node a => Parser (Expr a)
+pTermExpr = pUnOpExpr <|> pParenExpr <|> pIdentExpr <|> pLitExpr
+
+-- | Parse an expression between parentheses
+pParenExpr :: Node a => Parser (Expr a)
+pParenExpr = parens pExpr
+
+-- | Parse an identifier
+pIdentExpr :: Node a => Parser (Expr a)
+pIdentExpr = Ident <$> nodeParser pLabel
+
+-- | Parse a literal (number)
+pLitExpr :: Node a => Parser (Expr a)
+pLitExpr = Lit <$> nodeParser pNumber
+
 -- | Parse an address operand ("0x2A2A")
-pAddress :: Parser Address
-pAddress = (Addr <$> addr') <?> "address"
-  where
-    addr' = do
-      addr <- brackets pHexadecimal
-      if addr <= 0xFFFF
-        then return $ fromIntegral addr
-        else fail $ printf "address can be at most 0xFFFF (not 0x%02X)" addr
-
--- | Parse an address in shortened form ("0x2A")
-pRegister :: Parser Register
-pRegister = Reg <$> lexeme pName
-
 pName :: Parser Text
 pName = do
-  c <- satisfy isAlpha
+  c    <- satisfy isAlpha
   rest <- many $ satisfy isAlphaNum
   return $ pack $ c : rest
-
--- | Parse an immediate byte value
-pImmediate :: Parser Immediate
-pImmediate = do
-  void $ lexeme $ char '#'
-  (Imm . fromIntegral <$> pNumber) <?> "immediate value"
 
 -- | Parse a number
 pNumber :: Parser Int
@@ -174,12 +253,13 @@ pBinary = lexeme (string' "0b" *> L.binary) <?> "binary value"
 
 -- | Parse a label identifier ("_start", ".loop1", etc.)
 pLabel :: Parser Label
-pLabel =
-  lexeme $ do
-    p <- fromMaybe "" <$> maybeDot
-    p' <- append p <$> (singleton <$> fstLetter)
-    Lbl <$> (append p' . pack <$> many otherLetter <?> "label")
-  where
-    maybeDot = (try . optional) (singleton <$> char '.')
-    fstLetter = satisfy isAsciiLower <|> satisfy isAsciiUpper <|> char '_'
-    otherLetter = fstLetter <|> satisfy isDigit
+pLabel = lexeme $ do
+  p  <- fromMaybe "" <$> maybeDot
+  p' <- append p <$> (singleton <$> fstLetter)
+  append p' . pack <$> many otherLetter <?> "label"
+ where
+  maybeDot    = (try . optional) (singleton <$> char '.')
+  fstLetter   = satisfy isAsciiLower <|> satisfy isAsciiUpper <|> char '_'
+  otherLetter = fstLetter <|> satisfy isDigit
+
+

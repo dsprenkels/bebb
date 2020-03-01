@@ -6,21 +6,23 @@
 
 module Main
   ( main
-  ) where
+  )
+where
 
 import           Asm
 import           AST
 import           RIO
 import           Test.Hspec
 import           Test.Hspec.Megaparsec
-import           Text.Megaparsec       hiding (parse)
+import           Text.Megaparsec         hiding ( parse )
 
 newtype NoPos a =
   NP a
   deriving (Show, Eq)
 
 instance Node NoPos where
-  newNode parser = NP <$> parser
+  nodeParser parser = NP <$> parser
+  nodeFrom _ = NP
   unpackNode (NP x) = x
 
 deriving instance Show (Decl NoPos)
@@ -35,6 +37,10 @@ deriving instance Show (Operand NoPos)
 
 deriving instance Eq (Operand NoPos)
 
+deriving instance Show (Expr NoPos)
+
+deriving instance Eq (Expr NoPos)
+
 parse :: Parsec e s a -> s -> Either (ParseErrorBundle s e) a
 parse p = runParser p "<test input>"
 
@@ -44,48 +50,68 @@ main = hspec spec
 spec :: Spec
 spec = do
   spNumber
-  spAddress
   spDecl
+  spExpr
   spExample
 
 spNumber :: Spec
-spNumber =
-  describe "pNumber" $ do
-    it "hexadecimal" $ parse pNumber "0x2A" `shouldParse` 42
-    it "decimal" $ parse pNumber "42" `shouldParse` 42
-    it "negative decimal" $ parse pNumber "-42" `shouldParse` (-42)
-    it "binary" $ parse pNumber "0b101010" `shouldParse` 42
-
-spAddress :: Spec
-spAddress =
-  describe "pAddress" $
-  it "literal" $ parse pAddress "[0x2A2A]" `shouldParse` Addr 0x2A2A
+spNumber = describe "pNumber" $ do
+  it "hexadecimal" $ parse pNumber "0x2A" `shouldParse` 42
+  it "decimal" $ parse pNumber "42" `shouldParse` 42
+  it "negative decimal" $ parse pNumber "-42" `shouldParse` (-42)
+  it "binary" $ parse pNumber "0b101010" `shouldParse` 42
 
 spDecl :: Spec
-spDecl =
-  describe "pDecl" $ do
-    it "global label" $
-      parse pDecl "_start:\n" `shouldParse` LblDecl (NP $ Lbl "_start")
-    it "local label" $
-      parse pDecl ".loop1:\n" `shouldParse` LblDecl (NP $ Lbl ".loop1")
-    it "add instruction" $
-      parse pDecl "  add r3\n" `shouldParse`
-      InstrDecl
-        (NP $ Instr {mnemonic = NP "add", opnds = [NP $ OpR $ NP $ Reg "r3"]})
-    it "globalLabelIdent" $ parse pLabel "_start" `shouldParse` Lbl "_start"
-    it "localLabelIdent" $ parse pLabel ".L1" `shouldParse` Lbl ".L1"
+spDecl = describe "pDecl" $ do
+  it "global label" $ parse pDecl "_start:\n" `shouldParse` LblDecl
+    (NP "_start")
+  it "local label" $ parse pDecl ".loop1:\n" `shouldParse` LblDecl (NP ".loop1")
+  it "add instruction" $ parse pLine "  add r3\n" `shouldParse` Just
+    (InstrDecl
+      (NP $ Instr { mnemonic = NP "add", opnds = [NP $ Addr $ Ident $ NP "r3"] }
+      )
+    )
+  it "globalLabelIdent" $ parse pLabel "_start" `shouldParse` "_start"
+  it "localLabelIdent" $ parse pLabel ".L1" `shouldParse` ".L1"
+
+spExpr :: Spec
+spExpr = describe "pExpr" $ do
+  -- Terminators
+  it "decimal" $ parse pExpr "3" `shouldParse` Lit (NP 3)
+  it "hex" $ parse pExpr "0x3" `shouldParse` Lit (NP 3)
+  it "identifier" $ parse pExpr "_start" `shouldParse` Ident (NP "_start")
+  it "identifier with dot" $ parse pExpr ".L1" `shouldParse` Ident (NP ".L1")
+  it "parentheses" $ parse pExpr "(3)" `shouldParse` Lit (NP 3)
+  -- Composite expressions
+  it "add (normal)" $ parse pExpr "1 + 2 + 3" `shouldParse` Binary
+    Add
+    (NP (Binary Add (NP $ Lit $ NP 1) (NP $ Lit $ NP 2)))
+    (NP $ Lit $ NP 3)
+  it "add (right)" $ parse pExpr "1 + (2 + 3)" `shouldParse` Binary
+    Add
+    (NP $ Lit $ NP 1)
+    (NP (Binary Add (NP $ Lit $ NP 2) (NP $ Lit $ NP 3)))
+  it "add & mul (left)" $ parse pExpr "1 * 2 + 3" `shouldParse` Binary
+    Add
+    (NP (Binary Mul (NP $ Lit $ NP 1) (NP $ Lit $ NP 2)))
+    (NP $ Lit $ NP 3)
+  it "add & mul (right)" $ parse pExpr "1 + 2 * 3" `shouldParse` Binary
+    Add
+    (NP $ Lit $ NP 1)
+    (NP (Binary Mul (NP $ Lit $ NP 2) (NP $ Lit $ NP 3)))
+  it "unary" $ parse pExpr "-3" `shouldParse` Unary Neg (NP $ Lit $ NP 3)
 
 spExample :: Spec
 spExample = describe "example" $ it "fibonacci" $ parse p `shouldSucceedOn` asm
-  where
-    p :: Parser (AST NoPos)
-    p = pASM
-    asm =
-      "\
+ where
+  p :: Parser (AST NoPos)
+  p = pASM
+  asm
+    = "\
       \fibonacci:\n\
       \  ; Compute 10 steps of the fibonacci sequence.\n\
       \\n\
-      \  lda #0\n\
+      \  lda #0 ; mark\n\
       \  sta r0\n\
       \  lda #1\n\
       \  sta r1\n\
