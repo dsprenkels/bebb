@@ -3,13 +3,19 @@
 
 module Main
   ( main
-  ) where
+  )
+where
 
-import qualified Driver
-import RIO
-import qualified RIO.ByteString as BS
+import qualified Syntax
+import           RIO
+import qualified RIO.Text                      as T
+import qualified RIO.ByteString                as BS
+import           Text.Megaparsec.Error          ( errorBundlePretty )
 
 main :: IO ()
 main = do
-  asm <- tshow <$> BS.getContents
-  BS.putStr $ Driver.assemble asm
+  src <- decodeUtf8Lenient <$> BS.getContents
+  let result = Syntax.parse "<stdin>" src in
+   BS.putStr $ T.encodeUtf8 $ T.pack $ case result of
+    Right ast -> show ast
+    Left  err -> errorBundlePretty err

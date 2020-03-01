@@ -25,7 +25,7 @@ import           RIO.Text                       ( append
                                                 , pack
                                                 , singleton
                                                 )
-import           Text.Megaparsec
+import           Text.Megaparsec         hiding ( parse )
 import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer    as L
 
@@ -77,6 +77,11 @@ deriving instance Show (Expr WithPos)
 
 deriving instance Eq (Expr WithPos)
 
+
+-- | Parse an assembly source file and return an AST
+parse :: String -> Text -> Either (ParseErrorBundle Text Void) (AST WithPos)
+parse = runParser pASM
+
 -- | Consume line comments
 lineComment :: Parser ()
 lineComment = L.skipLineComment ";"
@@ -101,7 +106,7 @@ symbol = L.symbol sc
 symbol' :: Text -> Parser Text
 symbol' = L.symbol' sc
 
--- | Parse a DM assmebly source file
+-- | Assembly source parser
 pASM :: Node a => Parser (AST a)
 pASM = concat <$> many (maybeToList <$> pLine) <* eof
 

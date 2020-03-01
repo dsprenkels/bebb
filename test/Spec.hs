@@ -11,7 +11,7 @@ where
 
 import           AST
 import           RIO
-import           Syntax
+import           Syntax                  hiding ( parse )
 import           Test.Hspec
 import           Test.Hspec.Megaparsec
 import           Text.Megaparsec         hiding ( parse )
