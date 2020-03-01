@@ -5,11 +5,11 @@ module Main
   ( main
   ) where
 
-import qualified Asm
+import qualified Driver
 import RIO
 import qualified RIO.ByteString as BS
 
 main :: IO ()
 main = do
   asm <- tshow <$> BS.getContents
-  BS.putStr $ Asm.assemble asm
+  BS.putStr $ Driver.assemble asm

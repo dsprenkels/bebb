@@ -9,9 +9,9 @@ module Main
   )
 where
 
-import           Asm
 import           AST
 import           RIO
+import           Syntax
 import           Test.Hspec
 import           Test.Hspec.Megaparsec
 import           Text.Megaparsec         hiding ( parse )

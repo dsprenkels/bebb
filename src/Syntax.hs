@@ -8,7 +8,7 @@
 -- TODO(dsprenkels): Add a custom error reporting function, that not only
 -- supports parse errors, but also type errors etc.
 --
-module Asm where
+module Syntax where
 
 import           AST
 import           RIO                     hiding ( many
@@ -76,10 +76,6 @@ deriving instance Eq (Operand WithPos)
 deriving instance Show (Expr WithPos)
 
 deriving instance Eq (Expr WithPos)
-
--- | Assembly the contents of an assembly file to binary
-assemble :: Text -> ByteString
-assemble _ = error "unimplemented"
 
 -- | Consume line comments
 lineComment :: Parser ()
