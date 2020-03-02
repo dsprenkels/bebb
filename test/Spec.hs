@@ -50,7 +50,7 @@ main = hspec spec
 spec :: Spec
 spec = do
   spNumber
-  spDecl
+  spLine
   spExpr
   spExample
 
@@ -61,18 +61,22 @@ spNumber = describe "pNumber" $ do
   it "negative decimal" $ parse pNumber "-42" `shouldParse` (-42)
   it "binary" $ parse pNumber "0b101010" `shouldParse` 42
 
-spDecl :: Spec
-spDecl = describe "pDecl" $ do
-  it "global label" $ parse pDecl "_start:\n" `shouldParse` LblDecl
-    (NP "_start")
-  it "local label" $ parse pDecl ".loop1:\n" `shouldParse` LblDecl (NP ".loop1")
-  it "add instruction" $ parse pLine "  add r3\n" `shouldParse` Just
-    (InstrDecl
-      (NP $ Instr { mnemonic = NP "add", opnds = [NP $ Addr $ Ident $ NP "r3"] }
-      )
-    )
-  it "globalLabelIdent" $ parse pLabel "_start" `shouldParse` "_start"
-  it "localLabelIdent" $ parse pLabel ".L1" `shouldParse` ".L1"
+spLine :: Spec
+spLine = describe "pLine" $ do
+  it "global label"
+    $ shouldParse (parse pLine "_start:\n") [LblDecl (NP "_start")]
+  it "local label"
+    $ shouldParse (parse pLine ".loop1:\n") [LblDecl (NP ".loop1")]
+  it "add instruction" $ shouldParse
+    (parse pLine "add r3\n")
+    [ InstrDecl
+        (NP Instr { mnemonic = NP "add", opnds = [NP $ Addr $ Ident $ NP "r3"] }
+        )
+    ]
+  it "globalLabelIdent" $ shouldParse (parse pLabel "_start") "_start"
+  it "localLabelIdent" $ shouldParse (parse pLabel ".L1") ".L1"
+  it "data" $ shouldParse (parse pLine "1, 2, 3\n")
+                          (map (DataDecl . NP . Lit . NP) [1, 2, 3])
 
 spExpr :: Spec
 spExpr = describe "pExpr" $ do
@@ -108,6 +112,8 @@ spExample = describe "example" $ it "fibonacci" $ parse p `shouldSucceedOn` asm
   p = pASM
   asm
     = "\
+      \forty_two: 42\
+      \\n\
       \fibonacci:\n\
       \  ; Compute 10 steps of the fibonacci sequence.\n\
       \\n\

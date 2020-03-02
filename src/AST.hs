@@ -8,8 +8,9 @@ import           RIO
 -- AST nodes:
 type AST n = [Decl n]
 
-data Decl n = InstrDecl (n (Instruction n))
-    | LblDecl (n Label)
+data Decl n = LblDecl (n Label)
+    | InstrDecl (n (Instruction n))
+    | DataDecl (n (Expr n))
 
 data Instruction n = Instr
     { mnemonic :: !(n Text)

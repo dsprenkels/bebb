@@ -108,20 +108,16 @@ symbol' = L.symbol' sc
 
 -- | Assembly source parser
 pASM :: Node a => Parser (AST a)
-pASM = concat <$> many (maybeToList <$> pLine) <* eof
+pASM = (concat <$> many pLine) <* eof
 
 -- | Parse a line
-pLine :: Node a => Parser (Maybe (Decl a))
-pLine = (pInstructionDeclOrEmptyLine <|> optional pLabelDecl) <* sc <* char
-  '\n'
- where
-  pInstructionDeclOrEmptyLine = do
-    void $ lexeme (char ' ' <|> char '\t') -- Require indentation
-    optional pInstructionDecl
-
--- | Parse a general declaration
-pDecl :: Node a => Parser (Decl a)
-pDecl = pLabelDecl <|> pInstructionDecl
+pLine :: Node a => Parser (AST a)
+pLine = do
+  sc
+  lbl   <- maybeToList <$> optional (try pLabelDecl) <* sc
+  decls <- (pure <$> pInstructionDecl <* sc) <|> (pDataDecl `sepBy` symbol ",")
+  void (char '\n')
+  return (lbl ++ decls)
 
 -- | Parse a label declaration
 pLabelDecl :: Node a => Parser (Decl a)
@@ -130,6 +126,10 @@ pLabelDecl = (LblDecl <$> nodeParser pLabel) <* symbol ":"
 -- | Parse an instruction declaration (i.e. a line containing an instruction)
 pInstructionDecl :: Node a => Parser (Decl a)
 pInstructionDecl = InstrDecl <$> nodeParser pInstruction
+
+-- | Parse the declaration of literal data
+pDataDecl :: Node a => Parser (Decl a)
+pDataDecl = DataDecl <$> nodeParser pExpr
 
 -- | Parse an instruction
 pInstruction :: Node a => Parser (Instruction a)
