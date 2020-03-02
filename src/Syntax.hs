@@ -28,6 +28,7 @@ import           RIO.Text                       ( append
 import           Text.Megaparsec         hiding ( parse )
 import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer    as L
+import           Text.Printf                    ( printf )
 
 -- | Our custom Megaparsec parser type
 type Parser = Parsec Void Text
@@ -238,7 +239,7 @@ pName = do
 
 -- | Parse a number
 pNumber :: Parser Int
-pNumber = pHexadecimal <|> pBinary <|> pDecimal
+pNumber = pHexadecimal <|> pBinary <|> pDecimal <|> pBadHexadecimal
 
 -- | Parse a decimal value ("42")
 pDecimal :: Parser Int
@@ -247,6 +248,15 @@ pDecimal = lexeme (L.signed sc L.decimal) <?> "decimal value"
 -- | Parse a hexadecimal value ("0x2A")
 pHexadecimal :: Parser Int
 pHexadecimal = lexeme (string' "0x" *> L.hexadecimal) <?> "hex value"
+
+-- | Parse a bad hexademical value and throw a helpful error code
+pBadHexadecimal :: Parser Int
+pBadHexadecimal = do
+  failOffset <- getOffset
+  void (symbol "$")
+  hex <- L.hexadecimal :: Parser Int
+  setOffset failOffset
+  fail $ printf "dollar-style hex ($%X) is invalid, use 0x%X instead" hex hex
 
 -- | Parse a binary value ("0b101010")
 pBinary :: Parser Int

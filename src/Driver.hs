@@ -2,7 +2,7 @@
 
 module Driver where
 
-import RIO
+import           RIO
 
 -- | Assembly the contents of an assembly file to binary
 assemble :: Text -> ByteString
