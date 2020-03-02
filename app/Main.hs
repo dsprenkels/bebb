@@ -1,4 +1,3 @@
--- This module should contain the argument parsing and then call Run.run
 {-# LANGUAGE NoImplicitPrelude #-}
 
 module Main
@@ -10,7 +9,7 @@ import qualified Syntax
 import           RIO
 import qualified RIO.Text                      as T
 import qualified RIO.ByteString                as BS
-import           Text.Megaparsec.Error          ( errorBundlePretty )
+import           Error
 
 main :: IO ()
 main = do

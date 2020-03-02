@@ -76,7 +76,7 @@ spLine = describe "pLine" $ do
   it "globalLabelIdent" $ shouldParse (parse pLabel "_start") "_start"
   it "localLabelIdent" $ shouldParse (parse pLabel ".L1") ".L1"
   it "data" $ shouldParse (parse pLine "1, 2, 3\n")
-                          (map (DataDecl . NP . Lit . NP) [1, 2, 3])
+                          (DataDecl . NP . Lit . NP <$> [1, 2, 3])
 
 spExpr :: Spec
 spExpr = describe "pExpr" $ do

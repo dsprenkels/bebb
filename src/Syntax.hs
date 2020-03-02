@@ -11,6 +11,7 @@
 module Syntax where
 
 import           AST
+import           Error
 import           RIO                     hiding ( many
                                                 , some
                                                 , try
@@ -28,7 +29,7 @@ import           RIO.Text                       ( append
 import           Text.Megaparsec         hiding ( parse )
 import           Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer    as L
-import           Text.Printf                    ( printf )
+import           Control.Arrow                  ( left )
 
 -- | Our custom Megaparsec parser type
 type Parser = Parsec Void Text
@@ -80,8 +81,8 @@ deriving instance Eq (Expr WithPos)
 
 
 -- | Parse an assembly source file and return an AST
-parse :: String -> Text -> Either (ParseErrorBundle Text Void) (AST WithPos)
-parse = runParser pASM
+parse :: String -> Text -> Either ErrorBundle (AST WithPos)
+parse filename text = left fromParseErrorBundle (runParser pASM filename text)
 
 -- | Consume line comments
 lineComment :: Parser ()
@@ -145,7 +146,7 @@ pInstruction = do
 
 -- | Parse an instruction mnemonic
 pMnemonic :: Parser Text
-pMnemonic = lexeme pName
+pMnemonic = lexeme (pName <?> "mnemonic")
 
 -- | Wrap a parser between parentheses ("( ... )")
 parens :: Parser a -> Parser a
@@ -161,7 +162,7 @@ pAddress = (Addr <$> pExpr) <?> "address"
 
 -- | Parse an expression
 pExpr :: Node a => Parser (Expr a)
-pExpr = pBinOpExpr binaryOps
+pExpr = pBinOpExpr binaryOps <?> "expression"
 
 -- | Parse an expression, but restrict to parsing the binary operations in `opsLeft`
 pExpr' :: Node a => [BinaryOps] -> Parser (Expr a)
@@ -239,7 +240,7 @@ pName = do
 
 -- | Parse a number
 pNumber :: Parser Int
-pNumber = pHexadecimal <|> pBinary <|> pDecimal <|> pBadHexadecimal
+pNumber = pHexadecimal <|> pBinary <|> pDecimal
 
 -- | Parse a decimal value ("42")
 pDecimal :: Parser Int
@@ -249,26 +250,18 @@ pDecimal = lexeme (L.signed sc L.decimal) <?> "decimal value"
 pHexadecimal :: Parser Int
 pHexadecimal = lexeme (string' "0x" *> L.hexadecimal) <?> "hex value"
 
--- | Parse a bad hexademical value and throw a helpful error code
-pBadHexadecimal :: Parser Int
-pBadHexadecimal = do
-  failOffset <- getOffset
-  void (symbol "$")
-  hex <- L.hexadecimal :: Parser Int
-  setOffset failOffset
-  fail $ printf "dollar-style hex ($%X) is invalid, use 0x%X instead" hex hex
-
 -- | Parse a binary value ("0b101010")
 pBinary :: Parser Int
 pBinary = lexeme (string' "0b" *> L.binary) <?> "binary value"
 
 -- | Parse a label identifier ("_start", ".loop1", etc.)
 pLabel :: Parser Label
-pLabel = lexeme $ do
-  p  <- fromMaybe "" <$> maybeDot
-  p' <- append p <$> (singleton <$> fstLetter)
-  append p' . pack <$> many otherLetter <?> "label"
+pLabel = lexeme (pLabel' <?> "label")
  where
+  pLabel' = do
+    p  <- fromMaybe "" <$> maybeDot
+    p' <- append p <$> (singleton <$> fstLetter)
+    append p' . pack <$> many otherLetter
   maybeDot    = (try . optional) (singleton <$> char '.')
   fstLetter   = satisfy isAsciiLower <|> satisfy isAsciiUpper <|> char '_'
   otherLetter = fstLetter <|> satisfy isDigit
