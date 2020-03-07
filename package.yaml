@@ -15,6 +15,7 @@ dependencies:
 - base >= 4.11 && < 10
 - rio
 - megaparsec >= 8.0.0
+- ansi-terminal
 
 ghc-options:
 - -Wall

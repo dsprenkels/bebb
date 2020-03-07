@@ -110,7 +110,7 @@ symbol' = L.symbol' sc
 
 -- | Assembly source parser
 pASM :: Node a => Parser (AST a)
-pASM = (concat <$> many pLine) <* eof
+pASM = (concat <$> many pLine) <* scn <* eof
 
 -- | Parse a line
 pLine :: Node a => Parser (AST a)

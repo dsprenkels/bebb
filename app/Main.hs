@@ -14,7 +14,8 @@ import           Error
 main :: IO ()
 main = do
   src <- decodeUtf8Lenient <$> BS.getContents
-  let result = Syntax.parse "<stdin>" src in
-   BS.putStr $ T.encodeUtf8 $ T.pack $ case result of
-    Right ast -> show ast
-    Left  err -> errorBundlePretty err
+  let filename = "<stdin>"
+      result   = Syntax.parse filename src in
+    case result of
+    Right ast -> BS.putStr $ T.encodeUtf8 $ T.pack $ show ast
+    Left  err -> fmtBundle filename src err
