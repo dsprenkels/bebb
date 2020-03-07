@@ -35,8 +35,8 @@ import           Control.Arrow                  ( left )
 type Parser = Parsec Void Text
 
 data SourceSpan = SourceSpan
-    { lo :: SourcePos
-    , hi :: SourcePos
+    { lo :: Int
+    , hi :: Int
     }
     deriving (Show, Eq)
 
@@ -53,9 +53,9 @@ data WithPos a = WP
 
 instance Node WithPos where
   nodeParser parser = do
-    lo   <- getSourcePos
+    lo   <- getOffset
     node <- parser
-    hi   <- getSourcePos
+    hi   <- getOffset
     return WP { node, ss = SourceSpan { lo, hi } }
   nodeFrom (n1, n2) node = WP { node, ss = SourceSpan { lo, hi } }
    where
