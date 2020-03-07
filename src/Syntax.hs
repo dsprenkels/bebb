@@ -116,7 +116,7 @@ pASM = (concat <$> many pLine) <* eof
 pLine :: Node a => Parser (AST a)
 pLine = do
   sc
-  lbl   <- maybeToList <$> optional (try pLabelDecl) <* sc
+  lbl   <- many (try pLabelDecl) <* sc
   decls <- (pure <$> pInstructionDecl <* sc) <|> (pDataDecl `sepBy` symbol ",")
   void (char '\n')
   return (lbl ++ decls)
