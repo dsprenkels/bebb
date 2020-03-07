@@ -178,7 +178,7 @@ pBinOpExpr []                   = pTermExpr
 pBinOpExpr (ops : nextLevelOps) = do
   ret  <- nodeParser $ pExpr' nextLevelOps
   rest <- many $ do
-    op  <- pOp ops
+    op  <- pOp ops <?> "binary operator"
     rhs <- nodeParser $ pExpr' nextLevelOps
     return (op, rhs)
   return $ unflatten ret rest
@@ -199,7 +199,7 @@ binaryOps =
 -- | Parse a unary expression ('-3')
 pUnOpExpr :: Node a => Parser (Expr a)
 pUnOpExpr = do
-  op   <- pOp unaryOps
+  op   <- pOp unaryOps <?> "unary operator"
   opnd <- nodeParser pExpr
   return $ Unary op opnd
 
