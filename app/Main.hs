@@ -10,12 +10,13 @@ import           RIO
 import qualified RIO.Text                      as T
 import qualified RIO.ByteString                as BS
 import           Error
+import Emit (emit)
 
 main :: IO ()
 main = do
   src <- decodeUtf8Lenient <$> BS.getContents
   let filename = "<stdin>"
-      result   = Syntax.parse filename src in
-    case result of
-    Right ast -> BS.putStr $ T.encodeUtf8 $ T.pack $ show ast
+  let result   = Syntax.parse filename src
+  case result of
+    Right ast -> BS.putStr $ T.encodeUtf8 $ T.pack $ show $ emit ast
     Left  err -> fmtBundle filename src err

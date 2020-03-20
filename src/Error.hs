@@ -1,5 +1,6 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE MultiWayIf #-}
 
 module Error where
 
@@ -18,16 +19,17 @@ import qualified System.Console.ANSI           as ANSI
 import           System.IO                      ( putStrLn
                                                 , putStr
                                                 )
+import           AST                            ( Span )
 
 
 data Error = ParseError (M.ParseError Text Void)
-           | Error String Span deriving (Show)
+           | CustomError String Span
+           | InternalCompilerError String Span deriving (Show)
 
 type ErrorBundle = NonEmpty Error
 
-type Span = (Int, Maybe Int)
 type RealPos = (Int, Int)
-type RealSpan = (RealPos, Maybe RealPos)
+type RealSpan = (RealPos, RealPos)
 
 fromParseError :: M.ParseError Text Void -> Error
 fromParseError = ParseError
@@ -37,18 +39,18 @@ fromParseErrorBundle M.ParseErrorBundle { M.bundleErrors } =
   fromParseError <$> bundleErrors
 
 getErrorTypeDesc :: Error -> String
-getErrorTypeDesc (ParseError _) = "parse error"
-getErrorTypeDesc (Error _ _   ) = "error"
+getErrorTypeDesc (ParseError _   ) = "parse error"
+getErrorTypeDesc (CustomError _ _) = "error"
 
 getErrorText :: Error -> String
 getErrorText (ParseError err) = trim (M.parseErrorTextPretty err)
   where trim = dropWhileEnd isSpace . dropWhile isSpace
-getErrorText (Error msg _) = msg
+getErrorText (CustomError msg _) = msg
 
 getSpan :: Error -> Span
-getSpan (ParseError (M.TrivialError lo _ _)) = (lo, Nothing)
-getSpan (ParseError (M.FancyError lo _    )) = (lo, Nothing)
-getSpan (Error _ sp                        ) = sp
+getSpan (ParseError (M.TrivialError lo _ _)) = (lo, lo)
+getSpan (ParseError (M.FancyError lo _    )) = (lo, lo)
+getSpan (CustomError _ sp                  ) = sp
 
 resolveAllOffsets :: Text -> [Int] -> [RealPos]
 resolveAllOffsets srcText allOffsets =
@@ -68,30 +70,29 @@ resolveAllOffsets srcText allOffsets =
     = resolveAllOffsets' src offsets (offsetCount + 1, lineCount, colCount + 1)
 
 fmtSpan :: [String] -> RealSpan -> IO ()
-fmtSpan srcLines ((loLine, loCol), hi) = do
+fmtSpan srcLines (lo@(loLine, loCol), hi@(hiLine, hiCol)) = do
   ansiBlueBold
-  putStrLn (replicate (length lineNo) ' ' <> " |")
+  putStrLn (replicate (length lineNo) ' ' ++ " |")
   ansiBlueBold
-  putStr (lineNo <> " | ")
+  putStr (lineNo ++ " | ")
   ansiPurpleBold
   putStrLn (srcLines !! loLine)
   ansiBlueBold
-  putStr (replicate (length lineNo) ' ' <> " | ")
+  putStr (replicate (length lineNo) ' ' ++ " | ")
   ansiPurpleBold
-  case hi of
-    Nothing -> putStrLn (replicate loCol ' ' <> "^")
-    Just (hiLine, hiCol)
-      | loLine == hiLine -> do
-        putStr (replicate loCol ' ')
-        putStrLn (replicate (hiCol - loCol) '^')
-      | otherwise -> error "unimplemented"
+  if
+    | lo == hi -> putStrLn (replicate loCol ' ' ++ "^")
+    | loLine == hiLine -> do
+      putStr (replicate loCol ' ')
+      putStrLn (replicate (hiCol - loCol) '^')
+    | otherwise -> error "unimplemented"
   ansiReset
   where lineNo = show $ loLine + 1
 
 fmtError :: String -> [String] -> (Span -> RealSpan) -> Error -> IO ()
 fmtError filename srcLines getRealSpan err = do
   ansiRedBold
-  putStrLn (getErrorTypeDesc err <> ":")
+  putStrLn (getErrorTypeDesc err ++ ":")
   ansiReset
   ansiBold
   putStrLn $ leftPad $ mangleErrorText (getErrorText err)
@@ -107,16 +108,16 @@ fmtError filename srcLines getRealSpan err = do
   leftPad s = "    " ++ s
 
 fmtBundle :: String -> Text -> ErrorBundle -> IO ()
-fmtBundle filename src errors = sequence_ (fmtError filename srcLines realSpan <$> toList errors)
+fmtBundle filename src errors = sequence_
+  (fmtError filename srcLines realSpan <$> toList errors)
  where
   srcLines = T.unpack <$> T.lines src
-  realSpan (lo, maybeHi) = (resolveOffset lo, resolveOffset <$> maybeHi)
+  realSpan (lo, hi) = (resolveOffset lo, resolveOffset hi)
   resolveOffset offset = HM.lookupDefault notFound offset offsetTable
   notFound    = error "unreachable: unresolved span in error"
   offsetTable = HM.fromList $ zip allOffsets (resolveAllOffsets src allOffsets)
   allOffsets  = concatMap getOffsetsFromError errors
-  getOffsetsFromError err =
-    let (lo, maybeHi) = getSpan err in lo : toList maybeHi
+  getOffsetsFromError err = let (lo, hi) = getSpan err in lo : [hi]
 
 ansiReset :: IO ()
 ansiReset = ANSI.setSGR [ANSI.Reset]

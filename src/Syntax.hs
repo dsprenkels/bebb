@@ -3,11 +3,7 @@
 {-# LANGUAGE NamedFieldPuns     #-}
 {-# LANGUAGE NoImplicitPrelude  #-}
 {-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE StandaloneDeriving #-}
 
--- TODO(dsprenkels): Add a custom error reporting function, that not only
--- supports parse errors, but also type errors etc.
---
 module Syntax where
 
 import           AST
@@ -34,51 +30,12 @@ import           Control.Arrow                  ( left )
 -- | Our custom Megaparsec parser type
 type Parser = Parsec Void Text
 
-data SourceSpan = SourceSpan
-    { lo :: Int
-    , hi :: Int
-    }
-    deriving (Show, Eq)
-
-class Node (n :: * -> *) where
-  nodeParser :: Parser a -> Parser (n a)
-  nodeFrom ::  (n b, n c) -> a -> n a
-  unpackNode :: n a -> a
-
-data WithPos a = WP
-    { node :: a
-    , ss   :: SourceSpan
-    }
-    deriving (Show, Eq)
-
-instance Node WithPos where
-  nodeParser parser = do
-    lo   <- getOffset
-    node <- parser
-    hi   <- getOffset
-    return WP { node, ss = SourceSpan { lo, hi } }
-  nodeFrom (n1, n2) node = WP { node, ss = SourceSpan { lo, hi } }
-   where
-    WP { ss = SourceSpan { lo } } = n1
-    WP { ss = SourceSpan { hi } } = n2
-  unpackNode WP { node } = node
-
-deriving instance Show (Decl WithPos)
-
-deriving instance Eq (Decl WithPos)
-
-deriving instance Show (Instruction WithPos)
-
-deriving instance Eq (Instruction WithPos)
-
-deriving instance Show (Operand WithPos)
-
-deriving instance Eq (Operand WithPos)
-
-deriving instance Show (Expr WithPos)
-
-deriving instance Eq (Expr WithPos)
-
+nodeParser :: Node n => Parser a -> Parser (n a)
+nodeParser parser = do
+  lo   <- getOffset
+  node <- parser
+  hi   <- getOffset
+  return $ newNode node (lo, hi)
 
 -- | Parse an assembly source file and return an AST
 parse :: String -> Text -> Either ErrorBundle (AST WithPos)

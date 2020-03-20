@@ -21,9 +21,10 @@ newtype NoPos a =
   deriving (Show, Eq)
 
 instance Node NoPos where
-  nodeParser parser = NP <$> parser
+  newNode node (_, _) = NP node
   nodeFrom _ = NP
   unpackNode (NP x) = x
+  unpackSpan _ = (0, 0)
 
 deriving instance Show (Decl NoPos)
 
