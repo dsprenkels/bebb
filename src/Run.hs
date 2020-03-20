@@ -1,14 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
-
 module Run
   ( run
-  )
-where
+  ) where
 
-import           RIO
-import qualified RIO.ByteString                as BS
+import RIO
+import qualified RIO.ByteString as BS
 
 run :: IO ()
 run = BS.putStr "We're inside the application!\n"

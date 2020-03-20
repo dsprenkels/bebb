@@ -1,40 +1,29 @@
-{-# LANGUAGE FlexibleInstances  #-}
-{-# LANGUAGE KindSignatures     #-}
-{-# LANGUAGE NamedFieldPuns     #-}
-{-# LANGUAGE NoImplicitPrelude  #-}
-{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Syntax where
 
-import           AST
-import           Error
-import           RIO                     hiding ( many
-                                                , some
-                                                , try
-                                                )
-import           RIO.Char                       ( isAlpha
-                                                , isAlphaNum
-                                                , isAsciiLower
-                                                , isAsciiUpper
-                                                , isDigit
-                                                )
-import           RIO.Text                       ( append
-                                                , pack
-                                                , singleton
-                                                )
-import           Text.Megaparsec         hiding ( parse )
-import           Text.Megaparsec.Char
-import qualified Text.Megaparsec.Char.Lexer    as L
-import           Control.Arrow                  ( left )
+import AST
+import Control.Arrow (left)
+import Error
+import RIO hiding (many, some, try)
+import RIO.Char (isAlpha, isAlphaNum, isAsciiLower, isAsciiUpper, isDigit)
+import RIO.Text (append, pack, singleton)
+import Text.Megaparsec hiding (parse)
+import Text.Megaparsec.Char
+import qualified Text.Megaparsec.Char.Lexer as L
 
 -- | Our custom Megaparsec parser type
 type Parser = Parsec Void Text
 
 nodeParser :: Node n => Parser a -> Parser (n a)
 nodeParser parser = do
-  lo   <- getOffset
+  lo <- getOffset
   node <- parser
-  hi   <- getOffset
+  hi <- getOffset
   return $ newNode node (lo, hi)
 
 -- | Parse an assembly source file and return an AST
@@ -73,7 +62,7 @@ pASM = (concat <$> many pLine) <* scn <* eof
 pLine :: Node a => Parser (AST a)
 pLine = do
   sc
-  lbl   <- many (try pLabelDecl) <* sc
+  lbl <- many (try pLabelDecl) <* sc
   decls <- (pure <$> pInstructionDecl <* sc) <|> (pDataDecl `sepBy` symbol ",")
   void (char '\n')
   return (lbl ++ decls)
@@ -94,12 +83,12 @@ pDataDecl = DataDecl <$> nodeParser pExpr
 pInstruction :: Node a => Parser (Instruction a)
 pInstruction = do
   mnemonic <- nodeParser pMnemonic
-  opnds    <- nodeParser pAnyOp `sepBy` symbol ","
-  return $ Instr { mnemonic, opnds }
- where
-  pAnyOp  = (pImmOp <|> pAddrOp) <?> "instruction operand"
-  pImmOp  = Imm <$> (symbol "#" *> pExpr)
-  pAddrOp = Addr <$> pExpr
+  opnds <- nodeParser pAnyOp `sepBy` symbol ","
+  return $ Instr {mnemonic, opnds}
+  where
+    pAnyOp = (pImmOp <|> pAddrOp) <?> "instruction operand"
+    pImmOp = Imm <$> (symbol "#" *> pExpr)
+    pAddrOp = Addr <$> pExpr
 
 -- | Parse an instruction mnemonic
 pMnemonic :: Parser Text
@@ -123,7 +112,7 @@ pExpr = pBinOpExpr binaryOps <?> "expression"
 
 -- | Parse an expression, but restrict to parsing the binary operations in `opsLeft`
 pExpr' :: Node a => [BinaryOps] -> Parser (Expr a)
-pExpr' []      = pTermExpr
+pExpr' [] = pTermExpr
 pExpr' opsLeft = pBinOpExpr opsLeft
 
 -- | A list of binary operations seperated by some symbol
@@ -131,19 +120,19 @@ type BinaryOps = [(Text, BinOp)]
 
 -- | Parse a binary expression ('3 + 3')
 pBinOpExpr :: Node a => [BinaryOps] -> Parser (Expr a)
-pBinOpExpr []                   = pTermExpr
-pBinOpExpr (ops : nextLevelOps) = do
-  ret  <- nodeParser $ pExpr' nextLevelOps
-  rest <- many $ do
-    op  <- pOp ops <?> "binary operator"
-    rhs <- nodeParser $ pExpr' nextLevelOps
-    return (op, rhs)
+pBinOpExpr [] = pTermExpr
+pBinOpExpr (ops:nextLevelOps) = do
+  ret <- nodeParser $ pExpr' nextLevelOps
+  rest <-
+    many $ do
+      op <- pOp ops <?> "binary operator"
+      rhs <- nodeParser $ pExpr' nextLevelOps
+      return (op, rhs)
   return $ unflatten ret rest
- where
   -- unflatten is left-associative
-  unflatten root [] = unpackNode root
-  unflatten lhs ((op, rhs) : rest) =
-    unflatten (nodeFrom (lhs, rhs) (Binary op lhs rhs)) rest
+  where
+    unflatten root [] = unpackNode root
+    unflatten lhs ((op, rhs):rest) = unflatten (nodeFrom (lhs, rhs) (Binary op lhs rhs)) rest
 
 -- | Definitions of all binary operations ordered by precedence.
 binaryOps :: [BinaryOps]
@@ -156,7 +145,7 @@ binaryOps =
 -- | Parse a unary expression ('-3')
 pUnOpExpr :: Node a => Parser (Expr a)
 pUnOpExpr = do
-  op   <- pOp unaryOps <?> "unary operator"
+  op <- pOp unaryOps <?> "unary operator"
   opnd <- nodeParser pExpr
   return $ Unary op opnd
 
@@ -169,8 +158,8 @@ unaryOps = [("+", Pos), ("-", Neg), ("~", Not)]
 
 -- | Parse an operator chosen from a list of operators
 pOp :: [(Text, a)] -> Parser a
-pOp []                 = empty
-pOp ((sym, op) : next) = (symbol sym >> return op) <|> pOp next
+pOp [] = empty
+pOp ((sym, op):next) = (symbol sym >> return op) <|> pOp next
 
 -- | Parse an expression
 pTermExpr :: Node a => Parser (Expr a)
@@ -191,7 +180,7 @@ pLitExpr = Lit <$> nodeParser pNumber
 -- | Parse an address operand ("0x2A2A")
 pName :: Parser Text
 pName = do
-  c    <- satisfy isAlpha
+  c <- satisfy isAlpha
   rest <- many $ satisfy isAlphaNum
   return $ pack $ c : rest
 
@@ -214,13 +203,11 @@ pBinary = lexeme (string' "0b" *> L.binary) <?> "binary value"
 -- | Parse a label identifier ("_start", ".loop1", etc.)
 pLabel :: Parser Label
 pLabel = lexeme (pLabel' <?> "label")
- where
-  pLabel' = do
-    p  <- fromMaybe "" <$> maybeDot
-    p' <- append p <$> (singleton <$> fstLetter)
-    append p' . pack <$> many otherLetter
-  maybeDot    = (try . optional) (singleton <$> char '.')
-  fstLetter   = satisfy isAsciiLower <|> satisfy isAsciiUpper <|> char '_'
-  otherLetter = fstLetter <|> satisfy isDigit
-
-
+  where
+    pLabel' = do
+      p <- fromMaybe "" <$> maybeDot
+      p' <- append p <$> (singleton <$> fstLetter)
+      append p' . pack <$> many otherLetter
+    maybeDot = (try . optional) (singleton <$> char '.')
+    fstLetter = satisfy isAsciiLower <|> satisfy isAsciiUpper <|> char '_'
+    otherLetter = fstLetter <|> satisfy isDigit
