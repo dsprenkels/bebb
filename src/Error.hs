@@ -38,17 +38,20 @@ fromParseErrorBundle M.ParseErrorBundle {M.bundleErrors} = fromParseError <$> bu
 getErrorTypeDesc :: Error -> String
 getErrorTypeDesc (ParseError _) = "parse error"
 getErrorTypeDesc (CustomError _ _) = "error"
+getErrorTypeDesc (InternalCompilerError _ _) = "internal compiler error"
 
 getErrorText :: Error -> String
 getErrorText (ParseError err) = trim (M.parseErrorTextPretty err)
   where
     trim = dropWhileEnd isSpace . dropWhile isSpace
 getErrorText (CustomError msg _) = msg
+getErrorText (InternalCompilerError msg _) = msg
 
 getSpan :: Error -> Span
 getSpan (ParseError (M.TrivialError lo _ _)) = (lo, lo)
 getSpan (ParseError (M.FancyError lo _)) = (lo, lo)
 getSpan (CustomError _ sp) = sp
+getSpan (InternalCompilerError _ sp) = sp
 
 resolveAllOffsets :: Text -> [Int] -> [RealPos]
 resolveAllOffsets srcText allOffsets =
@@ -58,7 +61,7 @@ resolveAllOffsets srcText allOffsets =
     resolveAllOffsets' [] _ _ = error "unreachable: offset past end of source"
     resolveAllOffsets' _ [] _ = []
     resolveAllOffsets' (c:src) offsets@((idx, offset):rest) counts@(offsetCount, lineCount, colCount)
-      | offset == offsetCount = (idx, (lineCount, colCount)) : resolveAllOffsets' src rest counts
+      | offset == offsetCount = (idx, (lineCount, colCount)) : resolveAllOffsets' (c:src) rest counts
       | c == '\n' = resolveAllOffsets' src offsets (offsetCount + 1, lineCount + 1, 0)
       | otherwise = resolveAllOffsets' src offsets (offsetCount + 1, lineCount, colCount + 1)
 
@@ -74,13 +77,14 @@ fmtSpan srcLines (lo@(loLine, loCol), hi@(hiLine, hiCol)) = do
   putStr (replicate (length lineNo) ' ' ++ " | ")
   ansiPurpleBold
   if | lo == hi -> putStrLn (replicate loCol ' ' ++ "^")
-     | loLine == hiLine ->
+     | isSingleLine ->
        do putStr (replicate loCol ' ')
           putStrLn (replicate (hiCol - loCol) '^')
-     | otherwise -> error "unimplemented"
+     | otherwise -> error (printf "unimplemented: lo=%d:%d hi=%d:%d" loLine loCol hiLine hiCol)
   ansiReset
   where
     lineNo = show $ loLine + 1
+    isSingleLine = loLine == hiLine || (hiLine == loLine + 1 && hiCol == 0)
 
 fmtError :: String -> [String] -> (Span -> RealSpan) -> Error -> IO ()
 fmtError filename srcLines getRealSpan err = do
@@ -111,7 +115,7 @@ fmtBundle filename src errors = sequence_ (fmtError filename srcLines realSpan <
     allOffsets = concatMap getOffsetsFromError errors
     getOffsetsFromError err =
       let (lo, hi) = getSpan err
-       in lo : [hi]
+       in [lo, hi]
 
 ansiReset :: IO ()
 ansiReset = ANSI.setSGR [ANSI.Reset]

@@ -17,5 +17,9 @@ main = do
   let filename = "<stdin>"
   let result = Syntax.parse filename src
   case result of
-    Right ast -> BS.putStr $ T.encodeUtf8 $ T.pack $ show $ emit ast
+    Right ast -> do
+      case emit ast of
+        Right code -> BS.putStr code
+        Left err -> fmtBundle filename src err
+      BS.putStr $ T.encodeUtf8 $ T.pack $ show $ emit ast
     Left err -> fmtBundle filename src err

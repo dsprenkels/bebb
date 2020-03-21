@@ -5,7 +5,6 @@ module TargetDesc where
 
 import Data.Bits
 import RIO
-import RIO.Map
 
 data OperandDesc
   = NoOpnd
@@ -19,6 +18,7 @@ data Instruction =
     , mnemonic :: !Text
     , operandDesc :: !OperandDesc
     }
+  deriving (Show)
 
 fAnd :: Applicative f => f Bool -> f Bool -> f Bool
 fAnd = liftA2 (&&)
@@ -33,12 +33,7 @@ checkOpcode instrOpcode
   | otherwise = instrOpcode
 
 check :: [Instruction] -> [Instruction]
-check instrs = checkOpcode . opcode <$> instrs *> instrs
-
-instrSize :: Instruction -> Int
-instrSize Instr {operandDesc = NoOpnd} = 1
-instrSize Instr {operandDesc = ImmOpnd} = 2
-instrSize Instr {operandDesc = AddrOpnd} = 3
+check = map (\instr -> instr {opcode = checkOpcode $ opcode instr})
 
 bebbInstrs :: [Instruction]
 bebbInstrs =

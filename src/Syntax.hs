@@ -83,6 +83,7 @@ pDataDecl = DataDecl <$> nodeParser pExpr
 pInstruction :: Node a => Parser (Instruction a)
 pInstruction = do
   mnemonic <- nodeParser pMnemonic
+  sc
   opnds <- nodeParser pAnyOp `sepBy` symbol ","
   return $ Instr {mnemonic, opnds}
   where
@@ -92,7 +93,7 @@ pInstruction = do
 
 -- | Parse an instruction mnemonic
 pMnemonic :: Parser Text
-pMnemonic = lexeme (pName <?> "mnemonic")
+pMnemonic = pName <?> "mnemonic"
 
 -- | Wrap a parser between parentheses ("( ... )")
 parens :: Parser a -> Parser a
@@ -171,11 +172,11 @@ pParenExpr = parens pExpr
 
 -- | Parse an identifier
 pIdentExpr :: Node a => Parser (Expr a)
-pIdentExpr = Ident <$> nodeParser pLabel
+pIdentExpr = Ident <$> nodeParser pLabel <* sc
 
 -- | Parse a literal (number)
 pLitExpr :: Node a => Parser (Expr a)
-pLitExpr = Lit <$> nodeParser pNumber
+pLitExpr = Lit <$> nodeParser pNumber <* sc
 
 -- | Parse an address operand ("0x2A2A")
 pName :: Parser Text
@@ -190,19 +191,19 @@ pNumber = pHexadecimal <|> pBinary <|> pDecimal
 
 -- | Parse a decimal value ("42")
 pDecimal :: Parser Int
-pDecimal = lexeme (L.signed sc L.decimal) <?> "decimal value"
+pDecimal = L.signed sc L.decimal <?> "decimal value"
 
 -- | Parse a hexadecimal value ("0x2A")
 pHexadecimal :: Parser Int
-pHexadecimal = lexeme (string' "0x" *> L.hexadecimal) <?> "hex value"
+pHexadecimal = (string' "0x" *> L.hexadecimal) <?> "hex value"
 
 -- | Parse a binary value ("0b101010")
 pBinary :: Parser Int
-pBinary = lexeme (string' "0b" *> L.binary) <?> "binary value"
+pBinary = (string' "0b" *> L.binary) <?> "binary value"
 
 -- | Parse a label identifier ("_start", ".loop1", etc.)
 pLabel :: Parser Label
-pLabel = lexeme (pLabel' <?> "label")
+pLabel = pLabel' <?> "label"
   where
     pLabel' = do
       p <- fromMaybe "" <$> maybeDot

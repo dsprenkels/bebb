@@ -7,6 +7,7 @@
 module AST where
 
 import RIO
+import qualified RIO.Text as T
 
 -- Location tracking
 type Span = (Int, Int)
@@ -67,6 +68,10 @@ data Operand n
   = Imm (Expr n)
   | Addr (Expr n)
 
+unpackOpnd :: Operand a -> Expr a
+unpackOpnd (Imm expr) = expr
+unpackOpnd (Addr expr) = expr
+
 data Expr n
   = Ident !(n Identifier)
   | Lit !(n Literal)
@@ -95,3 +100,9 @@ data UnOp
   deriving (Show, Eq)
 
 type Label = Text
+
+isGlobal :: Label -> Bool
+isGlobal = not . isLocal
+
+isLocal :: Label -> Bool
+isLocal lbl = (fst <$> T.uncons lbl) == Just '.'
