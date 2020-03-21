@@ -29,7 +29,7 @@ newtype ValueRef =
 
 data Value =
   Value
-    { evaluated :: Maybe Int
+    { value :: Int
     , ref :: ValueRef
     }
   deriving (Show)
@@ -57,14 +57,13 @@ instance Semigroup EmitState where
 instance Monoid EmitState where
   mempty = EmitState {offset = 0, bin = mempty, cp = mempty, errs = mempty}
 
-registerDefinitionsAST :: AST WithPos -> State EmitState ()
-registerDefinitionsAST ast =
-  modify (\es -> snd $ execState (registerDefinitionsAST' ast) (Nothing, es))
+registerLabelsAST :: AST WithPos -> State EmitState ()
+registerLabelsAST ast = modify (\es -> snd $ execState (registerLabelsAST' ast) (Nothing, es))
 
-registerDefinitionsAST' :: AST WithPos -> State (Maybe Text, EmitState) ()
-registerDefinitionsAST' [] = return mempty
-registerDefinitionsAST' (decl:rest) = do
-  (maybeGlobal, EmitState {cp}) <- get
+registerLabelsAST' :: AST WithPos -> State (Maybe Text, EmitState) ()
+registerLabelsAST' [] = return mempty
+registerLabelsAST' (decl:rest) = do
+  (maybeGlobal, EmitState {cp, offset}) <- get
   case decl of
     LblDecl textN -> do
       let text = unpackNode textN
@@ -75,26 +74,32 @@ registerDefinitionsAST' (decl:rest) = do
           let err = CustomError msg (unpackSpan textN)
           modify $ mapSnd (<> mempty {errs = [err]})
         Nothing -> do
-          let val = Value {evaluated = Nothing, ref = LabelRef textN}
+          let val = Value {value = offset, ref = LabelRef textN}
           modify $ mapSnd (<> mempty {cp = Map.singleton text val})
           modify $
             mapFst
               (if isGlobal text
                  then const $ Just text
                  else id)
-    _ -> return ()
-  registerDefinitionsAST' rest
+    InstrDecl instrN -> moveOffset (emitInstr instrN)
+    DataDecl dataN -> moveOffset (emitData dataN)
+  registerLabelsAST' rest
+  where
+    moveOffset :: State EmitState () -> State (Maybe Text, EmitState) ()
+    moveOffset emitFn = do
+      (maybeGlobal, es) <- get
+      -- Try to build the code, but only register the change in offset
+      let EmitState {offset} = execState emitFn es
+      put (maybeGlobal, es {offset})
 
 emit :: AST WithPos -> Either ErrorBundle ByteString
 emit ast
-  | not $ null $ errs esWithDefs = Left $ NE'.fromList $ errs esWithDefs
-  | not $ null $ errs esWithVals = Left $ NE'.fromList $ errs esWithVals
+  | not $ null $ errs esWithLabels = Left $ NE'.fromList $ errs esWithLabels
   | not $ null $ errs esComplete = Left $ NE'.fromList $ errs esComplete
   | otherwise = Right $ BS.pack $ bin esComplete
   where
-    esWithDefs = execState (registerDefinitionsAST ast) mempty
-    esWithVals = execState (emitASTCode ast) (reset esWithDefs)
-    esComplete = execState (emitASTCode ast) (reset esWithVals)
+    esWithLabels = execState (registerLabelsAST ast) mempty
+    esComplete = execState (emitASTCode ast) (reset esWithLabels)
     -- | Throw away bad code information
     reset es = es {offset = 0, bin = mempty}
 
@@ -106,7 +111,7 @@ emitASTCode (decl:rest) = do
     LblDecl textN -> do
       let text = unpackNode textN
       -- Fill in the location of this label
-      put es {cp = Map.adjust (\val -> val {evaluated = Just offset}) text cp}
+      put es {cp = Map.adjust (\val -> val {value = offset}) text cp}
     InstrDecl instrN -> emitInstr instrN
     DataDecl dataN -> emitData dataN
   emitASTCode rest
@@ -131,7 +136,10 @@ emitInstr instrN = do
              emitOpcode instrDesc
              emitOpnds (TD.operandDesc instrDesc) opnds
            more -> do
-             let msg = printf "instruction usage is ambiguous; target description is incorrect!\n%s" (show more)
+             let msg =
+                   printf
+                     "instruction usage is ambiguous; target description is incorrect!\n%s"
+                     (show more)
              emitError $ InternalCompilerError msg ss
 
 emitData :: WithPos (Expr WithPos) -> State EmitState ()
@@ -185,14 +193,7 @@ evalExpr (Ident identN) = do
   let ss = unpackSpan identN
   EmitState {cp} <- get
   case cp Map.!? unpackNode identN of
-    Just Value {evaluated = Just val} -> return val
-    Just Value {evaluated = Nothing}
-      -- This is an ICE, because by now we should already have evaluated all
-      -- label values.
-     -> do
-      let msg = printf "`%s` does not have a value!" ident
-      emitError $ InternalCompilerError msg ss
-      return 0
+    Just Value {value} -> return value
     Nothing -> do
       let msg = printf "`%s` is not defined" ident
       emitError $ CustomError msg ss
