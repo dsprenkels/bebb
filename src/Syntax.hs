@@ -42,17 +42,9 @@ scn = L.space space1 lineComment empty
 sc :: Parser ()
 sc = L.space (void (char ' ' <|> char '\t')) lineComment empty
 
--- | Lex a lexeme with spaces
-lexeme :: Parser a -> Parser a
-lexeme = L.lexeme sc
-
 -- | Custom version of Text.Megaparsec.Char.Lexer.symbol
 symbol :: Text -> Parser Text
 symbol = L.symbol sc
-
--- | Custom version of Text.Megaparsec.Char.Lexer.symbol'
-symbol' :: Text -> Parser Text
-symbol' = L.symbol' sc
 
 -- | Assembly source parser
 pASM :: Node a => Parser (AST a)
@@ -97,14 +89,6 @@ pMnemonic = pName <?> "mnemonic"
 -- | Wrap a parser between parentheses ("( ... )")
 parens :: Parser a -> Parser a
 parens = symbol "(" `between` symbol ")"
-
--- | Wrap a parser between brackets ("[ ... ]")
-brackets :: Parser a -> Parser a
-brackets = symbol "[" `between` symbol "]"
-
--- | Parse an address ("0x2A2A")
-pAddress :: Node a => Parser (Operand a)
-pAddress = (Addr <$> pExpr) <?> "address"
 
 -- | Parse an expression
 pExpr :: Node a => Parser (Expr a)
