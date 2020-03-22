@@ -39,6 +39,7 @@ type ConstPool = Map Text Value
 data EmitState =
   EmitState
     { offset :: Int
+    , maybeGlobalScope :: Maybe Text
     , bin :: [Word8]
     , cp :: ConstPool
     , errs :: [Error]
@@ -49,48 +50,49 @@ instance Semigroup EmitState where
   es1 <> es2 =
     EmitState
       { offset = offset es1 + offset es2
+      , maybeGlobalScope = maybeAnd (maybeGlobalScope es2) (maybeGlobalScope es1)
       , bin = bin es1 <> bin es2
       , cp = cp es1 <> cp es2
       , errs = errs es1 <> errs es2
       }
+    where
+      maybeAnd Nothing right = right
+      maybeAnd left _ = left
 
 instance Monoid EmitState where
-  mempty = EmitState {offset = 0, bin = mempty, cp = mempty, errs = mempty}
+  mempty =
+    EmitState {offset = 0, maybeGlobalScope = Nothing, bin = mempty, cp = mempty, errs = mempty}
 
 registerLabelsAST :: AST WithPos -> State EmitState ()
-registerLabelsAST ast = modify (\es -> snd $ execState (registerLabelsAST' ast) (Nothing, es))
-
-registerLabelsAST' :: AST WithPos -> State (Maybe Text, EmitState) ()
-registerLabelsAST' [] = return mempty
-registerLabelsAST' (decl:rest) = do
-  (maybeGlobal, EmitState {cp, offset}) <- get
+registerLabelsAST [] = return mempty
+registerLabelsAST (decl:rest) = do
+  EmitState {maybeGlobalScope, cp, offset} <- get
   case decl of
     LblDecl textN -> do
       let text = unpackNode textN
-      let label = fromMaybe "" maybeGlobal <> text
+      let label = inScope maybeGlobalScope text
       case Map.lookup text cp of
         Just _ -> do
           let msg = printf "symbol '%s' is already defined" label :: String
           let err = CustomError msg (unpackSpan textN)
-          modify $ mapSnd (<> mempty {errs = [err]})
+          modify (<> mempty {errs = [err]})
         Nothing -> do
           let val = Value {value = offset, ref = LabelRef textN}
-          modify $ mapSnd (<> mempty {cp = Map.singleton text val})
-          modify $
-            mapFst
-              (if isGlobal text
-                 then const $ Just text
-                 else id)
+          let newMGL =
+                if isGlobal text
+                  then Just text
+                  else Nothing
+          modify (<> mempty {maybeGlobalScope = newMGL, cp = Map.singleton text val})
     InstrDecl instrN -> moveOffset (emitInstr instrN)
     DataDecl dataN -> moveOffset (emitData dataN)
-  registerLabelsAST' rest
+  registerLabelsAST rest
   where
-    moveOffset :: State EmitState () -> State (Maybe Text, EmitState) ()
+    moveOffset :: State EmitState () -> State EmitState ()
     moveOffset emitFn = do
-      (maybeGlobal, es) <- get
+      es <- get
       -- Try to build the code, but only register the change in offset
       let EmitState {offset} = execState emitFn es
-      put (maybeGlobal, es {offset})
+      put (es {offset})
 
 emit :: AST WithPos -> Either ErrorBundle ByteString
 emit ast
@@ -106,12 +108,8 @@ emit ast
 emitASTCode :: AST WithPos -> State EmitState ()
 emitASTCode [] = return mempty
 emitASTCode (decl:rest) = do
-  es@EmitState {offset, cp} <- get
   case decl of
-    LblDecl textN -> do
-      let text = unpackNode textN
-      -- Fill in the location of this label
-      put es {cp = Map.adjust (\val -> val {value = offset}) text cp}
+    LblDecl _ -> return ()
     InstrDecl instrN -> emitInstr instrN
     DataDecl dataN -> emitData dataN
   emitASTCode rest
@@ -189,9 +187,9 @@ emitError err = modify (<> mempty {errs = [err]})
 
 evalExpr :: Expr WithPos -> State EmitState Int
 evalExpr (Ident identN) = do
-  let ident = unpackNode identN
+  EmitState {maybeGlobalScope, cp} <- get
+  let ident = inScope maybeGlobalScope (unpackNode identN)
   let ss = unpackSpan identN
-  EmitState {cp} <- get
   case cp Map.!? unpackNode identN of
     Just Value {value} -> return value
     Nothing -> do
@@ -206,6 +204,12 @@ evalExpr (Binary op leftN rightN) = do
 evalExpr (Unary op opndN) = do
   opnd <- evalExpr $ unpackNode opndN
   return $ getUnOp op opnd
+
+inScope :: Maybe Text -> Text -> Text
+inScope Nothing name = name
+inScope (Just scope) name
+  | (not . isGlobal) name = scope <> name
+  | otherwise = name
 
 getBinOp :: BinOp -> (Int -> Int -> Int)
 getBinOp Add = (+)
