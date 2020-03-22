@@ -56,15 +56,14 @@ symbol' = L.symbol' sc
 
 -- | Assembly source parser
 pASM :: Node a => Parser (AST a)
-pASM = (concat <$> many pLine) <* scn <* eof
+pASM = (concat <$> pLine `sepBy` char '\n') <* scn <* eof
 
 -- | Parse a line
-pLine :: Node a => Parser (AST a)
+pLine :: Node a => Parser [Decl a]
 pLine = do
   sc
   lbl <- many (try pLabelDecl) <* sc
   decls <- (pure <$> pInstructionDecl <* sc) <|> (pDataDecl `sepBy` symbol ",")
-  void (char '\n')
   return (lbl ++ decls)
 
 -- | Parse a label declaration
