@@ -11,7 +11,6 @@ import Error (Error, Error(..), ErrorBundle)
 import RIO
 import qualified RIO.ByteString as BS
 import qualified RIO.Map as Map
-import qualified RIO.NonEmpty.Partial as NE'
 import RIO.State
 import qualified TargetDesc as TD
 import Text.Printf (printf)
@@ -41,8 +40,6 @@ data EmitState =
     { offset :: Int
     , maybeGlobalScope :: Maybe Text
     , cp :: ConstPool
-     -- TODO(dsprenkels) Optimize construction of `errs`, it is currently O(n^2)
-    , errs :: [Error]
     }
   deriving (Show)
 
@@ -52,70 +49,106 @@ instance Semigroup EmitState where
       { offset = offset es1 + offset es2
       , maybeGlobalScope = maybeAnd (maybeGlobalScope es2) (maybeGlobalScope es1)
       , cp = cp es1 <> cp es2
-      , errs = errs es1 <> errs es2
       }
     where
       maybeAnd Nothing right = right
       maybeAnd left _ = left
 
 instance Monoid EmitState where
-  mempty = EmitState {offset = 0, maybeGlobalScope = Nothing, cp = mempty, errs = mempty}
+  mempty = EmitState {offset = 0, maybeGlobalScope = Nothing, cp = mempty}
 
-registerLabelsAST :: AST WithPos -> State EmitState ()
-registerLabelsAST [] = return mempty
-registerLabelsAST (decl:rest) = do
-  EmitState {maybeGlobalScope, cp, offset} <- get
-  case decl of
-    LblDecl textN -> do
-      let text = unpackNode textN
-      let label = inScope maybeGlobalScope text
-      case Map.lookup text cp of
-        Just _ -> do
-          let msg = printf "symbol '%s' is already defined" label :: String
-          let err = CustomError msg (unpackSpan textN)
-          modify (<> mempty {errs = [err]})
-        Nothing -> do
-          let val = Value {value = offset, ref = LabelRef textN}
-          let newMGL =
-                if isGlobal text
-                  then Just text
-                  else Nothing
-          modify (<> mempty {maybeGlobalScope = newMGL, cp = Map.singleton text val})
-    InstrDecl instrN -> moveOffset (emitInstr instrN)
-    DataDecl dataN -> moveOffset (emitData dataN)
-  registerLabelsAST rest
-  where
-    moveOffset :: State EmitState a -> State EmitState ()
-    moveOffset emitFn = do
-      es <- get
-      -- Try to build the code, but only register the change in offset
-      let EmitState {offset} = execState emitFn es
-      put (es {offset})
+data EmitResult a
+  = EmitOk a
+  | EmitErr (NonEmpty Error)
+  deriving (Show)
+
+instance Semigroup a => Semigroup (EmitResult a) where
+  EmitErr errs1 <> EmitErr errs2 = EmitErr (errs1 <> errs2)
+  EmitErr errs <> EmitOk _ = EmitErr errs
+  EmitOk _ <> EmitErr errs = EmitErr errs
+  EmitOk ok1 <> EmitOk ok2 = EmitOk (ok1 <> ok2)
+
+instance Monoid a => Monoid (EmitResult a) where
+  mempty = EmitOk mempty
+
+instance Functor EmitResult where
+  fmap f (EmitOk ok) = EmitOk (f ok)
+  fmap _ (EmitErr errs) = EmitErr errs
+
+instance Applicative EmitResult where
+  pure = EmitOk
+  EmitErr errs1 <*> EmitErr errs2 = EmitErr (errs1 <> errs2)
+  EmitErr errs1 <*> EmitOk _ = EmitErr errs1
+  EmitOk f <*> r = f <$> r
+
+instance Monad EmitResult where
+  (EmitOk ok) >>= f = f ok
+  (EmitErr errs) >>= _ = EmitErr errs
+
+data Pass
+  = RegisterLabelsPass
+  | EmitCodePass
+  deriving (Show)
 
 emit :: AST WithPos -> Either ErrorBundle ByteString
-emit ast
-  | not $ null $ errs esWithLabels = Left $ NE'.fromList $ errs esWithLabels
-  | not $ null $ errs esComplete = Left $ NE'.fromList $ errs esComplete
-  | otherwise = Right $ BS.pack binComplete
+emit ast =
+  case (erWithLabels, erComplete) of
+    (EmitErr errs, _) -> Left errs
+    (EmitOk (), EmitErr errs) -> Left errs
+    (EmitOk (), EmitOk bin) -> Right $ BS.pack bin
   where
-    esWithLabels = execState (registerLabelsAST ast) mempty
-    (binComplete, esComplete) = runState (emitASTCode ast) (reset esWithLabels)
+    (erWithLabels, esWithLabels) = runState (registerLabelsAST ast) mempty
+    erComplete = evalState (emitASTCode ast) (reset esWithLabels)
     -- | Throw away bad code information
     reset es = es {offset = 0}
 
-emitASTCode :: AST WithPos -> State EmitState [Word8]
+registerLabelsAST :: AST WithPos -> State EmitState (EmitResult ())
+registerLabelsAST [] = return mempty
+registerLabelsAST (decl:rest) = do
+  EmitState {maybeGlobalScope, cp, offset} <- get
+  result <-
+    case decl of
+      LblDecl textN -> do
+        let text = unpackNode textN
+        let label = inScope maybeGlobalScope text
+        case Map.lookup text cp of
+          Just _ -> do
+            let msg = printf "symbol '%s' is already defined" label :: String
+            return $ emitError $ CustomError msg (unpackSpan textN)
+          Nothing -> do
+            let val = Value {value = offset, ref = LabelRef textN}
+            let newMGL =
+                  if isGlobal text
+                    then Just text
+                    else Nothing
+            modify (<> mempty {maybeGlobalScope = newMGL, cp = Map.singleton text val})
+            return $ EmitOk ()
+      InstrDecl instrN -> moveOffset (emitInstr RegisterLabelsPass instrN)
+      DataDecl dataN -> moveOffset (emitData RegisterLabelsPass dataN)
+  result' <- registerLabelsAST rest
+  return (result <> result')
+  where
+    moveOffset :: State EmitState (EmitResult a) -> State EmitState (EmitResult ())
+    moveOffset emitFn = do
+      es <- get
+      -- Try to build the code, but only register the change in offset
+      let (er, EmitState {offset}) = runState emitFn es
+      put (es {offset})
+      return (() <$ er)
+
+emitASTCode :: AST WithPos -> State EmitState (EmitResult [Word8])
 emitASTCode [] = return mempty
 emitASTCode (decl:rest) = do
-  bin <-
+  er <-
     case decl of
-      LblDecl _ -> return []
-      InstrDecl instrN -> emitInstr instrN
-      DataDecl dataN -> emitData dataN
-  bin' <- emitASTCode rest
-  return (bin ++ bin')
+      LblDecl _ -> return mempty
+      InstrDecl instrN -> emitInstr EmitCodePass instrN
+      DataDecl dataN -> emitData EmitCodePass dataN
+  er' <- emitASTCode rest
+  return (er <> er')
 
-emitInstr :: WithPos (Instruction WithPos) -> State EmitState [Word8]
-emitInstr instrN = do
+emitInstr :: Pass -> WithPos (Instruction WithPos) -> State EmitState (EmitResult [Word8])
+emitInstr pass instrN = do
   let Instr {mnemonic = mnemonicN, opnds} = unpackNode instrN
   let ss = unpackSpan instrN
   let mnemonic = unpackNode mnemonicN
@@ -125,34 +158,33 @@ emitInstr instrN = do
   if null mnemonicMatches
     then do
       let msg = printf "invalid mnemonic ('%s')" mnemonic
-      emitError $ CustomError msg (unpackSpan mnemonicN)
-      return []
+      return $ emitError $ CustomError msg (unpackSpan mnemonicN)
     else case filter isGoodOpndDesc mnemonicMatches of
            [] -> do
              let msg = printf "invalid operands for '%s' instruction (%s)" mnemonic (show opndDesc)
-             emitError $ CustomError msg ss
-             return []
+             return $ emitError (CustomError msg ss)
            [instrDesc] -> do
-             bin <- emitOpcode instrDesc
-             bin' <- emitOpnds (TD.operandDesc instrDesc) opnds
-             return (bin ++ bin')
+             er <- emitOpcode pass instrDesc
+             er' <- emitOpnds pass (TD.operandDesc instrDesc) opnds
+             return (er <> er')
            more -> do
              let msg =
                    printf
                      "instruction usage is ambiguous; target description is incorrect!\n%s"
                      (show more)
-             emitError $ InternalCompilerError msg ss
-             return []
+             return $ emitError (InternalCompilerError msg ss)
 
-emitData :: WithPos (Expr WithPos) -> State EmitState [Word8]
-emitData dataN = do
-  data_ <- evalExpr (unpackNode dataN)
-  if not (0 <= data_ && data_ < 256)
-    then do
-      let msg = printf "data should be a valid byte value (%d)" data_
-      emitError $ CustomError msg (unpackSpan dataN)
-      return []
-    else emitBinary [fromIntegral data_]
+emitData :: Pass -> WithPos (Expr WithPos) -> State EmitState (EmitResult [Word8])
+emitData RegisterLabelsPass _ = emitBinary [0]
+emitData EmitCodePass dataN = do
+  es <- get
+  case evalExpr es (unpackNode dataN) of
+    EmitOk val
+      | 0 <= val && val < 256 -> emitBinary [fromIntegral val]
+    EmitOk val -> do
+      let msg = printf "data should be a valid byte value (%d)" val
+      return $ emitError $ CustomError msg (unpackSpan dataN)
+    EmitErr errs -> return $ EmitErr errs
 
 getOpndDesc :: [WithPos (Operand WithPos)] -> Maybe TD.OperandDesc
 getOpndDesc [] = Just TD.NoOpnd
@@ -163,54 +195,61 @@ getOpndDesc [opndN] =
         Addr _ -> Just TD.AddrOpnd
 getOpndDesc _ = Nothing
 
-emitOpcode :: TD.Instruction -> State EmitState [Word8]
-emitOpcode TD.Instr {TD.opcode = opcode} = emitBinary [opcode]
+emitOpcode :: Pass -> TD.Instruction -> State EmitState (EmitResult [Word8])
+emitOpcode _ TD.Instr {TD.opcode = opcode} = emitBinary [opcode]
 
-emitOpnds :: TD.OperandDesc -> [WithPos (Operand WithPos)] -> State EmitState [Word8]
-emitOpnds TD.NoOpnd [] = return []
-emitOpnds TD.ImmOpnd [opndN]
+emitOpnds ::
+     Pass -> TD.OperandDesc -> [WithPos (Operand WithPos)] -> State EmitState (EmitResult [Word8])
+emitOpnds _ TD.NoOpnd [] = emitBinary []
+emitOpnds RegisterLabelsPass TD.ImmOpnd [_] = emitBinary [0]
+emitOpnds RegisterLabelsPass TD.AddrOpnd [_] = emitBinary [0, 0]
+emitOpnds EmitCodePass TD.ImmOpnd [opndN]
   -- TODO(dsprenkels) Error on {over,under}flow
  = do
+  es <- get
   let expr = unpackOpnd $ unpackNode opndN
-  val <- evalExpr expr
-  emitBinary [fromIntegral val]
-emitOpnds TD.AddrOpnd [opndN]
+  case evalExpr es expr of
+    EmitOk val -> emitBinary [fromIntegral val]
+    EmitErr errs -> return $ EmitErr errs
+emitOpnds EmitCodePass TD.AddrOpnd [opndN]
   -- TODO(dsprenkels) Error on {over,under}flow
  = do
+  es <- get
   let expr = unpackOpnd $ unpackNode opndN
-  val <- evalExpr expr
-  let loByte = fromIntegral val
-  let hiByte = fromIntegral (val `shiftR` 8)
-  emitBinary [loByte, hiByte]
-emitOpnds _ _ = error "unreachable"
+  case evalExpr es expr of
+    EmitOk val -> do
+      let loByte = fromIntegral val
+      let hiByte = fromIntegral (val `shiftR` 8)
+      emitBinary [loByte, hiByte]
+    EmitErr errs -> return $ EmitErr errs
+emitOpnds _ _ _ = error "unreachable"
 
-emitBinary :: [Word8] -> State EmitState [Word8]
+emitBinary :: [Word8] -> State EmitState (EmitResult [Word8])
 emitBinary bin = do
   modify (<> mempty {offset = length bin})
-  return bin
+  return $ emitSuccess bin
 
-emitError :: Error -> State EmitState ()
-emitError err = modify (<> mempty {errs = [err]})
+emitSuccess :: a -> EmitResult a
+emitSuccess = EmitOk
 
-evalExpr :: Expr WithPos -> State EmitState Int
-evalExpr (Ident identN) = do
-  EmitState {maybeGlobalScope, cp} <- get
+emitError :: Error -> EmitResult a
+emitError err = EmitErr (return err)
+
+evalExpr :: EmitState -> Expr WithPos -> EmitResult Int
+evalExpr EmitState {maybeGlobalScope, cp} (Ident identN) = do
   let ident = inScope maybeGlobalScope (unpackNode identN)
   let ss = unpackSpan identN
   case cp Map.!? unpackNode identN of
-    Just Value {value} -> return value
+    Just Value {value} -> emitSuccess value
     Nothing -> do
       let msg = printf "`%s` is not defined" ident
-      emitError $ CustomError msg ss
-      return 0
-evalExpr (Lit litN) = return (unpackNode litN)
-evalExpr (Binary op leftN rightN) = do
-  left <- evalExpr $ unpackNode leftN
-  right <- evalExpr $ unpackNode rightN
+      emitError (CustomError msg ss)
+evalExpr _ (Lit litN) = emitSuccess (unpackNode litN)
+evalExpr es (Binary op leftN rightN) = do
+  left <- evalExpr es (unpackNode leftN)
+  right <- evalExpr es (unpackNode rightN)
   return $ getBinOp op left right
-evalExpr (Unary op opndN) = do
-  opnd <- evalExpr $ unpackNode opndN
-  return $ getUnOp op opnd
+evalExpr es (Unary op opndN) = getUnOp op <$> evalExpr es (unpackNode opndN)
 
 inScope :: Maybe Text -> Text -> Text
 inScope Nothing name = name

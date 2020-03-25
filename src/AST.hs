@@ -20,18 +20,18 @@ class Node (n :: * -> *) where
 
 data WithPos a =
   WP
-    { inner :: a
+    { nodeInner :: a
     , ss :: Span
     }
   deriving (Show, Eq)
 
 instance Node WithPos where
-  newNode node (lo, hi) = WP {inner = node, ss = (lo, hi)}
-  nodeFrom (n1, n2) node = WP {inner = node, ss = (lo, hi)}
+  newNode node (lo, hi) = WP {nodeInner = node, ss = (lo, hi)}
+  nodeFrom (n1, n2) node = WP {nodeInner = node, ss = (lo, hi)}
     where
       WP {ss = (lo, _)} = n1
       WP {ss = (_, hi)} = n2
-  unpackNode WP {inner} = inner
+  unpackNode WP {nodeInner} = nodeInner
   unpackSpan WP {ss} = ss
 
 deriving instance Show (Decl WithPos)

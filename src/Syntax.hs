@@ -54,7 +54,7 @@ pASM = (concat <$> pLine `sepBy` char '\n') <* scn <* eof
 pLine :: Node a => Parser [Decl a]
 pLine = do
   sc
-  lbl <- many (try pLabelDecl) <* sc
+  lbl <- many (try pLabelDecl) <* sc -- TODO(dsprenkels) Erase this `try`
   decls <- (pure <$> pInstructionDecl <* sc) <|> (pDataDecl `sepBy` symbol ",")
   return (lbl ++ decls)
 
