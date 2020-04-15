@@ -54,27 +54,43 @@ pASM = (concat <$> pLine `sepBy` char '\n') <* scn <* eof
 pLine :: Node a => Parser [Decl a]
 pLine = do
   sc
-  lbl <- many (try pLabelDecl) <* sc -- TODO(dsprenkels) Erase this `try`
-  decls <- (pure <$> pInstructionDecl <* sc) <|> (pDataDecl `sepBy` symbol ",")
-  return (lbl ++ decls)
+  maybeBothNode <- optional $ nodeParser pLabelOrInstructionMnemonic
+  case maybeBothNode of
+    Just bothNode -> do
+      sc
+      let nameNode = nodeMap fst bothNode
+      let isLabel = snd $ unpackNode bothNode
+      if isLabel
+        then do
+          rest <- pLine
+          return (LblDecl nameNode : rest)
+        else do
+          instr <- nodeParser (pInstruction nameNode) <?> "instruction"
+          return [InstrDecl instr]
+    Nothing -> return []
+
+-- | Parse a label or instruction mnemonic
+-- |
+-- | Returns (name, isLabel)
+pLabelOrInstructionMnemonic :: Parser (Label, Bool)
+pLabelOrInstructionMnemonic = do
+  name <- pLabel
+  sc
+  colon <- optional $ char ':'
+  return (name, isJust colon)
 
 -- | Parse a label declaration
 pLabelDecl :: Node a => Parser (Decl a)
 pLabelDecl = (LblDecl <$> nodeParser pLabel) <* symbol ":"
 
--- | Parse an instruction declaration (i.e. a line containing an instruction)
-pInstructionDecl :: Node a => Parser (Decl a)
-pInstructionDecl = InstrDecl <$> nodeParser pInstruction
-
 -- | Parse the declaration of literal data
+-- TODO(dsprenkels) Remove this and replace by pseudo-instructions.
 pDataDecl :: Node a => Parser (Decl a)
 pDataDecl = DataDecl <$> nodeParser pExpr
 
 -- | Parse an instruction
-pInstruction :: Node a => Parser (Instruction a)
-pInstruction = do
-  mnemonic <- nodeParser pMnemonic
-  sc
+pInstruction :: Node a => a Text -> Parser (Instruction a)
+pInstruction mnemonic = do
   opnds <- nodeParser pAnyOp `sepBy` symbol ","
   return $ Instr {mnemonic, opnds}
   where
@@ -84,7 +100,7 @@ pInstruction = do
 
 -- | Parse an instruction mnemonic
 pMnemonic :: Parser Text
-pMnemonic = pName <?> "mnemonic"
+pMnemonic = pLabel <?> "mnemonic"
 
 -- | Wrap a parser between parentheses ("( ... )")
 parens :: Parser a -> Parser a
@@ -160,13 +176,6 @@ pIdentExpr = Ident <$> nodeParser pLabel <* sc
 -- | Parse a literal (number)
 pLitExpr :: Node a => Parser (Expr a)
 pLitExpr = Lit <$> nodeParser pNumber <* sc
-
--- | Parse an address operand ("0x2A2A")
-pName :: Parser Text
-pName = do
-  c <- satisfy isAlpha
-  rest <- many $ satisfy isAlphaNum
-  return $ pack $ c : rest
 
 -- | Parse a number
 pNumber :: Parser Int

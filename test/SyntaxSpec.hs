@@ -49,7 +49,7 @@ spec = do
   pNumberSpec
   pLineSpec
   pExprSpec
-  pExampleSpec
+  -- pExampleSpec
   pIssue1Spec
 
 pNumberSpec :: Spec
@@ -71,7 +71,7 @@ pLineSpec =
         [InstrDecl (NP Instr {mnemonic = NP "add", opnds = [NP $ Addr $ Ident $ NP "r3"]})]
     it "globalLabelIdent" $ shouldParse (parse pLabel "_start") "_start"
     it "localLabelIdent" $ shouldParse (parse pLabel ".L1") ".L1"
-    it "data" $ shouldParse (parse pLine "1, 2, 3\n") (DataDecl . NP . Lit . NP <$> [1, 2, 3])
+    -- it "data" $ shouldParse (parse pLine "1, 2, 3\n") (DataDecl . NP . Lit . NP <$> [1, 2, 3])
 
 pExprSpec :: Spec
 pExprSpec =
@@ -141,7 +141,7 @@ pIssue1Spec = describe "issue #1" $ do
      it "empty file" $ parse p `shouldSucceedOn` ""
      it "no newline after label" $ parse p `shouldSucceedOn` "_start:"
      it "no newline after instruction" $ parse p `shouldSucceedOn` "lda 0"
-     it "no newline after data" $ parse p `shouldSucceedOn` "0"
+    --  it "no newline after data" $ parse p `shouldSucceedOn` "0"
   where
     p :: Parser (AST NoPos)
     p = pASM

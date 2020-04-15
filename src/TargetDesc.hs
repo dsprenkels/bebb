@@ -5,6 +5,7 @@ module TargetDesc where
 
 import Data.Bits
 import RIO
+import Text.Printf (printf)
 
 data OperandDesc
   = NoOpnd
@@ -20,16 +21,10 @@ data Instruction =
     }
   deriving (Show)
 
-fAnd :: Applicative f => f Bool -> f Bool -> f Bool
-fAnd = liftA2 (&&)
-
-fOr :: Applicative f => f Bool -> f Bool -> f Bool
-fOr = liftA2 (||)
-
 checkOpcode :: Word8 -> Word8
 checkOpcode instrOpcode
   | (instrOpcode .&. complement 0x1F) /= 0 =
-    error "instrOpcode is more than 5 bits wide (0x%02x)" instrOpcode
+    error $ printf "instrOpcode is more than 5 bits wide (0x%02x)" instrOpcode
   | otherwise = instrOpcode
 
 check :: [Instruction] -> [Instruction]

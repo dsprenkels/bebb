@@ -13,8 +13,11 @@ import qualified RIO.Text as T
 type Span = (Int, Int)
 
 class Node (n :: * -> *) where
-  newNode :: a -> (Int, Int) -> n a
+  newNode :: a -> Span -> n a
   nodeFrom :: (n b, n c) -> a -> n a
+  nodeMap :: (a -> b) -> n a -> n b
+  nodeMap f node =
+    newNode (f $ unpackNode node) (unpackSpan node)
   unpackNode :: n a -> a
   unpackSpan :: n a -> Span
 
