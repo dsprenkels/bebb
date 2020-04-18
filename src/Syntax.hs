@@ -10,7 +10,7 @@ import AST
 import Control.Arrow (left)
 import Error
 import RIO hiding (many, some, try)
-import RIO.Char (isAlpha, isAlphaNum, isAsciiLower, isAsciiUpper, isDigit)
+import RIO.Char (isAsciiLower, isAsciiUpper, isDigit)
 import RIO.Text (append, pack, singleton)
 import Text.Megaparsec hiding (parse)
 import Text.Megaparsec.Char
@@ -54,17 +54,22 @@ pASM = (concat <$> pLine `sepBy` char '\n') <* scn <* eof
 pLine :: Node a => Parser [Decl a]
 pLine = do
   sc
-  maybeBothNode <- optional $ nodeParser pLabelOrInstructionMnemonic
+  maybeBothNode <- optional $ nodeParser pLabelOrMnemonic
   case maybeBothNode of
     Just bothNode -> do
       sc
       let nameNode = nodeMap fst bothNode
       let isLabel = snd $ unpackNode bothNode
-      if isLabel
-        then do
+      let dataSize = dataSizeFromText (unpackNode nameNode)
+      case (isLabel, dataSize) of
+        (True, _) -> do
           rest <- pLine
           return (LblDecl nameNode : rest)
-        else do
+        (False, Just dataSize') -> do
+          let dataSizeN = nodeMap (const dataSize') nameNode
+          dataDecl <- pDataDecl dataSizeN <?> "data"
+          return [dataDecl]
+        (False, Nothing) -> do
           instr <- nodeParser (pInstruction nameNode) <?> "instruction"
           return [InstrDecl instr]
     Nothing -> return []
@@ -72,8 +77,8 @@ pLine = do
 -- | Parse a label or instruction mnemonic
 -- |
 -- | Returns (name, isLabel)
-pLabelOrInstructionMnemonic :: Parser (Label, Bool)
-pLabelOrInstructionMnemonic = do
+pLabelOrMnemonic :: Parser (Label, Bool)
+pLabelOrMnemonic = do
   name <- pLabel
   sc
   colon <- optional $ char ':'
@@ -83,10 +88,19 @@ pLabelOrInstructionMnemonic = do
 pLabelDecl :: Node a => Parser (Decl a)
 pLabelDecl = (LblDecl <$> nodeParser pLabel) <* symbol ":"
 
+-- | Parse a DataSize from Text
+dataSizeFromText :: Text -> Maybe DataSize
+dataSizeFromText "i8" = Just I8
+dataSizeFromText "i16" = Just I16
+dataSizeFromText "i32" = Just I32
+dataSizeFromText "i64" = Just I64
+dataSizeFromText _ = Nothing
+
 -- | Parse the declaration of literal data
--- TODO(dsprenkels) Remove this and replace by pseudo-instructions.
-pDataDecl :: Node a => Parser (Decl a)
-pDataDecl = DataDecl <$> nodeParser pExpr
+-- |
+-- | Takes a Text node that should contain the parsed data size.
+pDataDecl :: Node a => a DataSize -> Parser (Decl a)
+pDataDecl dataSize = DataDecl dataSize <$> nodeParser pExpr `sepBy1` symbol ","
 
 -- | Parse an instruction
 pInstruction :: Node a => a Text -> Parser (Instruction a)
@@ -178,19 +192,19 @@ pLitExpr :: Node a => Parser (Expr a)
 pLitExpr = Lit <$> nodeParser pNumber <* sc
 
 -- | Parse a number
-pNumber :: Parser Int
+pNumber :: Parser Int64
 pNumber = pHexadecimal <|> pBinary <|> pDecimal
 
 -- | Parse a decimal value ("42")
-pDecimal :: Parser Int
+pDecimal :: Parser Int64
 pDecimal = L.signed sc L.decimal <?> "decimal value"
 
 -- | Parse a hexadecimal value ("0x2A")
-pHexadecimal :: Parser Int
+pHexadecimal :: Parser Int64
 pHexadecimal = (string' "0x" *> L.hexadecimal) <?> "hex value"
 
 -- | Parse a binary value ("0b101010")
-pBinary :: Parser Int
+pBinary :: Parser Int64
 pBinary = (string' "0b" *> L.binary) <?> "binary value"
 
 -- | Parse a label identifier ("_start", ".loop1", etc.)

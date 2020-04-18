@@ -49,7 +49,7 @@ spec = do
   pNumberSpec
   pLineSpec
   pExprSpec
-  -- pExampleSpec
+  pExampleSpec
   pIssue1Spec
 
 pNumberSpec :: Spec
@@ -71,7 +71,10 @@ pLineSpec =
         [InstrDecl (NP Instr {mnemonic = NP "add", opnds = [NP $ Addr $ Ident $ NP "r3"]})]
     it "globalLabelIdent" $ shouldParse (parse pLabel "_start") "_start"
     it "localLabelIdent" $ shouldParse (parse pLabel ".L1") ".L1"
-    -- it "data" $ shouldParse (parse pLine "1, 2, 3\n") (DataDecl . NP . Lit . NP <$> [1, 2, 3])
+    it "data" $
+      shouldParse
+        (parse pLine "i8 1, 2, 3\n")
+        [DataDecl (NP I8) [NP $ Lit $ NP 1, NP $ Lit $ NP 2, NP $ Lit $ NP 3]]
 
 pExprSpec :: Spec
 pExprSpec =
@@ -105,7 +108,7 @@ pExampleSpec = describe "example" $ it "fibonacci" $ parse p `shouldSucceedOn` a
     p = pASM
     asm =
       "\
-      \forty_two: 42\
+      \forty_two: i8 42\
       \\n\
       \fibonacci:\n\
       \  ; Compute 10 steps of the fibonacci sequence.\n\
@@ -137,10 +140,11 @@ pExampleSpec = describe "example" $ it "fibonacci" $ parse p `shouldSucceedOn` a
       \\n"
 
 pIssue1Spec :: Spec
-pIssue1Spec = describe "issue #1" $ do
-     it "empty file" $ parse p `shouldSucceedOn` ""
-     it "no newline after label" $ parse p `shouldSucceedOn` "_start:"
-     it "no newline after instruction" $ parse p `shouldSucceedOn` "lda 0"
+pIssue1Spec =
+  describe "issue #1" $ do
+    it "empty file" $ parse p `shouldSucceedOn` ""
+    it "no newline after label" $ parse p `shouldSucceedOn` "_start:"
+    it "no newline after instruction" $ parse p `shouldSucceedOn` "lda 0"
     --  it "no newline after data" $ parse p `shouldSucceedOn` "0"
   where
     p :: Parser (AST NoPos)

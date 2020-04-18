@@ -28,7 +28,7 @@ newtype ValueRef =
 
 data Value =
   Value
-    { value :: Int
+    { value :: Int64
     , ref :: ValueRef
     }
   deriving (Show)
@@ -116,7 +116,7 @@ registerLabelsAST (decl:rest) = do
             let msg = printf "symbol '%s' is already defined" label :: String
             return $ emitError $ CustomError msg (unpackSpan textN)
           Nothing -> do
-            let val = Value {value = offset, ref = LabelRef textN}
+            let val = Value {value = fromIntegral offset, ref = LabelRef textN}
             let newMGL =
                   if isGlobal text
                     then Just text
@@ -124,7 +124,7 @@ registerLabelsAST (decl:rest) = do
             modify (<> mempty {maybeGlobalScope = newMGL, cp = Map.singleton text val})
             return $ EmitOk ()
       InstrDecl instrN -> moveOffset (emitInstr RegisterLabelsPass instrN)
-      DataDecl dataN -> moveOffset (emitData RegisterLabelsPass dataN)
+      DataDecl dataSizeN dataN -> moveOffset (emitDataGroup RegisterLabelsPass dataSizeN dataN)
   result' <- registerLabelsAST rest
   return (result <> result')
   where
@@ -143,7 +143,7 @@ emitASTCode (decl:rest) = do
     case decl of
       LblDecl _ -> return mempty
       InstrDecl instrN -> emitInstr EmitCodePass instrN
-      DataDecl dataN -> emitData EmitCodePass dataN
+      DataDecl dataSizeN dataN -> emitDataGroup EmitCodePass dataSizeN dataN
   er' <- emitASTCode rest
   return (er <> er')
 
@@ -174,17 +174,35 @@ emitInstr pass instrN = do
                      (show more)
              return $ emitError (InternalCompilerError msg ss)
 
-emitData :: Pass -> WithPos (Expr WithPos) -> State EmitState (EmitResult [Word8])
-emitData RegisterLabelsPass _ = emitBinary [0]
-emitData EmitCodePass dataN = do
+emitDataGroup ::
+     Pass -> WithPos DataSize -> [WithPos (Expr WithPos)] -> State EmitState (EmitResult [Word8])
+emitDataGroup RegisterLabelsPass dataSizeN dataNs =
+  emitBinary $ replicate (byteSize * length dataNs) 0
+  where
+    byteSize = dataSizeBytes (unpackNode dataSizeN)
+emitDataGroup EmitCodePass dataSizeN dataNs = checkedEmitDataGroup (unpackNode dataSizeN) dataNs
+
+checkedEmitDataGroup :: DataSize -> [WithPos (Expr WithPos)] -> State EmitState (EmitResult [Word8])
+checkedEmitDataGroup _ [] = return $ EmitOk []
+checkedEmitDataGroup dataSize (dataN:rest) = do
   es <- get
-  case evalExpr es (unpackNode dataN) of
-    EmitOk val
-      | 0 <= val && val < 256 -> emitBinary [fromIntegral val]
-    EmitOk val -> do
-      let msg = printf "data should be a valid byte value (%d)" val
-      return $ emitError $ CustomError msg (unpackSpan dataN)
-    EmitErr errs -> return $ EmitErr errs
+  result <-
+    case evalExpr es (unpackNode dataN) of
+      EmitErr errs -> return $ EmitErr errs
+      EmitOk val
+        | val >= 2 ^ dataSizeBits dataSize -> do
+          let msg = printf "data too large for %s (%d)" (show dataSize) val
+          return $ emitError $ CustomError msg (unpackSpan dataN)
+        | val < -(2 ^ dataSizeBits dataSize) -> do
+          let msg = printf "data underflows %s (%d)" (show dataSize) val
+          return $ emitError $ CustomError msg (unpackSpan dataN)
+        | otherwise -> emitBinary $ dataLimbs (dataSizeBytes dataSize) val
+  otherResults <- checkedEmitDataGroup dataSize rest
+  return (result <> otherResults)
+
+dataLimbs :: Int -> Int64 -> [Word8]
+dataLimbs 0 _ = []
+dataLimbs limbs val = fromIntegral (val .&. 0xFF) : dataLimbs (limbs - 1) (val `shiftR` 8)
 
 getOpndDesc :: [WithPos (Operand WithPos)] -> Maybe TD.OperandDesc
 getOpndDesc [] = Just TD.NoOpnd
@@ -235,7 +253,7 @@ emitSuccess = EmitOk
 emitError :: Error -> EmitResult a
 emitError err = EmitErr (return err)
 
-evalExpr :: EmitState -> Expr WithPos -> EmitResult Int
+evalExpr :: EmitState -> Expr WithPos -> EmitResult Int64
 evalExpr EmitState {maybeGlobalScope, cp} (Ident identN) = do
   let ident = inScope maybeGlobalScope (unpackNode identN)
   let ss = unpackSpan identN
@@ -257,7 +275,7 @@ inScope (Just scope) name
   | (not . isGlobal) name = scope <> name
   | otherwise = name
 
-getBinOp :: BinOp -> (Int -> Int -> Int)
+getBinOp :: BinOp -> (Int64 -> Int64 -> Int64)
 getBinOp Add = (+)
 getBinOp Sub = (-)
 getBinOp Mul = (*)
@@ -267,7 +285,7 @@ getBinOp And = (.&.)
 getBinOp Or = (.|.)
 getBinOp Xor = xor
 
-getUnOp :: UnOp -> (Int -> Int)
+getUnOp :: UnOp -> (Int64 -> Int64)
 getUnOp Pos = id
 getUnOp Neg = negate
 getUnOp Not = complement

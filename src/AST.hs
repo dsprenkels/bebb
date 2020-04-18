@@ -16,8 +16,7 @@ class Node (n :: * -> *) where
   newNode :: a -> Span -> n a
   nodeFrom :: (n b, n c) -> a -> n a
   nodeMap :: (a -> b) -> n a -> n b
-  nodeMap f node =
-    newNode (f $ unpackNode node) (unpackSpan node)
+  nodeMap f node = newNode (f $ unpackNode node) (unpackSpan node)
   unpackNode :: n a -> a
   unpackSpan :: n a -> Span
 
@@ -59,7 +58,7 @@ type AST n = [Decl n]
 data Decl n
   = LblDecl (n Label)
   | InstrDecl (n (Instruction n))
-  | DataDecl (n (Expr n))
+  | DataDecl (n DataSize) [n (Expr n)]
 
 data Instruction n =
   Instr
@@ -74,6 +73,28 @@ data Operand n
 unpackOpnd :: Operand a -> Expr a
 unpackOpnd (Imm expr) = expr
 unpackOpnd (Addr expr) = expr
+
+data DataSize
+  = I8
+  | I16
+  | I32
+  | I64
+  deriving (Eq)
+
+instance Show DataSize where
+  show I8 = "i8"
+  show I16 = "i16"
+  show I32 = "i32"
+  show I64 = "i64"
+
+dataSizeBytes :: DataSize -> Int
+dataSizeBytes I8 = 1
+dataSizeBytes I16 = 2
+dataSizeBytes I32 = 4
+dataSizeBytes I64 = 8
+
+dataSizeBits :: DataSize -> Int
+dataSizeBits = (8 *) . dataSizeBytes
 
 data Expr n
   = Ident !(n Identifier)
@@ -94,7 +115,7 @@ data BinOp
 
 type Identifier = Text
 
-type Literal = Int
+type Literal = Int64
 
 data UnOp
   = Pos
