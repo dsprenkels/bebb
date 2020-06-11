@@ -16,6 +16,7 @@ dependencies:
 - rio
 - megaparsec >= 8.0.0
 - ansi-terminal
+- optparse-applicative
 
 ghc-options:
 - -Wall
